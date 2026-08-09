@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VisionMate Pro</string>
+    <string name="notification_channel_name">VisionMate Pro Background Service</string>
+    <string name="notification_channel_desc">Maintains smart cane connection and continuous safety monitoring</string>
+</resources>
