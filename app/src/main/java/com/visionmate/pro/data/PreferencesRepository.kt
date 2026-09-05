@@ -3,6 +3,7 @@ package com.visionmate.pro.data
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import com.visionmate.pro.model.AppLanguage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -13,7 +14,8 @@ data class UserPreferences(
     val emergencyContactName: String = "Guardian Contact",
     val emergencyContactPhone: String = "+919094741350",
     val isHapticsEnabled: Boolean = true,
-    val isTtsEnabled: Boolean = true
+    val isTtsEnabled: Boolean = true,
+    val languageCode: String = "en"
 )
 
 class PreferencesRepository(context: Context) {
@@ -30,8 +32,16 @@ class PreferencesRepository(context: Context) {
             emergencyContactName = prefs.getString("emergency_name", "Guardian Contact") ?: "Guardian Contact",
             emergencyContactPhone = prefs.getString("emergency_phone", "+919094741350") ?: "+919094741350",
             isHapticsEnabled = prefs.getBoolean("haptics_enabled", true),
-            isTtsEnabled = prefs.getBoolean("tts_enabled", true)
+            isTtsEnabled = prefs.getBoolean("tts_enabled", true),
+            languageCode = prefs.getString("language_code", "en") ?: "en"
         )
+    }
+
+    fun updateLanguage(language: AppLanguage) {
+        prefs.edit {
+            putString("language_code", language.code)
+        }
+        _preferences.value = _preferences.value.copy(languageCode = language.code)
     }
 
     fun updateDistances(cautionCm: Int, criticalCm: Int) {

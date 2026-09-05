@@ -2,6 +2,7 @@ package com.visionmate.pro.voice
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -24,7 +25,8 @@ class SpeechRecognizerManager(
     private val _recognizedText = MutableStateFlow("")
     val recognizedText: StateFlow<String> = _recognizedText.asStateFlow()
 
-    fun startListening(language: AppLanguage, onResult: (String) -> Unit) {
+    // Modified to return a list of matches instead of just one, for better language detection
+    fun startListening(language: AppLanguage, onResults: (List<String>) -> Unit) {
         if (SpeechRecognizer.isRecognitionAvailable(context)) {
             speechRecognizer?.destroy()
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
@@ -32,26 +34,18 @@ class SpeechRecognizerManager(
                     override fun onReadyForSpeech(params: Bundle?) {
                         _isListening.value = true
                     }
-
                     override fun onBeginningOfSpeech() {}
                     override fun onRmsChanged(rmsdB: Float) {}
                     override fun onBufferReceived(buffer: ByteArray?) {}
-
-                    override fun onEndOfSpeech() {
-                        _isListening.value = false
-                    }
-
-                    override fun onError(error: Int) {
-                        _isListening.value = false
-                    }
+                    override fun onEndOfSpeech() { _isListening.value = false }
+                    override fun onError(error: Int) { _isListening.value = false }
 
                     override fun onResults(results: Bundle?) {
                         _isListening.value = false
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if (!matches.isNullOrEmpty()) {
-                            val spokenText = matches[0]
-                            _recognizedText.value = spokenText
-                            onResult(spokenText)
+                            _recognizedText.value = matches[0]
+                            onResults(matches)
                         }
                     }
 
@@ -64,11 +58,18 @@ class SpeechRecognizerManager(
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, language.ttsLocaleTag)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, language.ttsLocaleTag)
+                
+                // Allow the recognizer to switch languages or return results in multiple languages
+                val supportedLanguages = arrayListOf("en-IN", "ta-IN", "hi-IN", "te-IN", "ml-IN")
+                putExtra(RecognizerIntent.EXTRA_SUPPORTED_LANGUAGES, supportedLanguages)
+                
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH, true)
+                }
             }
 
             speechRecognizer?.startListening(intent)
         } else {
-            // Fallback for emulator / non-speech environments
             _isListening.value = false
         }
     }

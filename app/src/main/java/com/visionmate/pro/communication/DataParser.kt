@@ -1,12 +1,13 @@
 package com.visionmate.pro.communication
 
 import com.visionmate.pro.model.SensorData
+import android.util.Log
 
 object DataParser {
 
     /**
-     * Parses key-value sensor string from ESP32 telemetry.
-     * Example input: "FRONT:100,LEFT:180,RIGHT:75,WATER:0,BATTERY:87,SOS:0"
+     * Advanced parser that handles commas, spaces, or tabs as delimiters.
+     * Example: "F:10, L:20" or "F:10 L:20" or "[FRONT:100]"
      */
     fun parseSensorString(raw: String): SensorData {
         var front = 180
@@ -17,24 +18,31 @@ object DataParser {
         var sos = false
 
         try {
-            val pairs = raw.trim().split(",")
-            for (pair in pairs) {
-                val kv = pair.split(":")
-                if (kv.size == 2) {
-                    val key = kv[0].trim().uppercase()
-                    val value = kv[1].trim()
-                    when (key) {
-                        "FRONT" -> front = value.toIntOrNull() ?: front
-                        "LEFT" -> left = value.toIntOrNull() ?: left
-                        "RIGHT" -> right = value.toIntOrNull() ?: right
-                        "WATER" -> water = (value == "1" || value.equals("true", ignoreCase = true))
-                        "BATTERY" -> battery = value.toIntOrNull() ?: battery
-                        "SOS" -> sos = (value == "1" || value.equals("true", ignoreCase = true))
+            // 1. Clean the string and handle multiple possible delimiters (comma, space, semicolon)
+            val cleaned = raw.replace("[", "").replace("]", "").replace("{", "").replace("}", "")
+            val tokens = cleaned.split(Regex("[,\\s;]+"))
+            
+            for (token in tokens) {
+                if (token.contains(":")) {
+                    val kv = token.split(":")
+                    if (kv.size == 2) {
+                        // Strip non-letters from key (e.g., " FRONT" or "(FRONT")
+                        val key = kv[0].trim().filter { it.isLetter() }.uppercase()
+                        val value = kv[1].trim()
+                        
+                        when (key) {
+                            "FRONT", "F" -> front = value.toIntOrNull() ?: front
+                            "LEFT", "L" -> left = value.toIntOrNull() ?: left
+                            "RIGHT", "R" -> right = value.toIntOrNull() ?: right
+                            "WATER", "W" -> water = (value == "1" || value.equals("true", ignoreCase = true))
+                            "BATTERY", "B" -> battery = value.toIntOrNull() ?: battery
+                            "SOS", "S" -> sos = (value == "1" || value.equals("true", ignoreCase = true))
+                        }
                     }
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("DataParser", "Error parsing: $raw")
         }
 
         return SensorData(

@@ -75,4 +75,11 @@ class HapticManager(
     fun vibrateCaution() {
         vibrateNearby()
     }
+
+    /**
+     * Alert pulse for critical obstacle detection
+     */
+    fun vibrateAlert() {
+        vibrateVeryClose()
+    }
 }

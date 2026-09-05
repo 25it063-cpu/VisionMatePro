@@ -43,6 +43,30 @@ object LocalizedObjectNames {
                 ObjectType.WATER -> "पानी"
                 ObjectType.OTHER -> "बाधा"
             }
+            AppLanguage.TELUGU -> when (objectType) {
+                ObjectType.PERSON -> "వ్యక్తి"
+                ObjectType.STAIRCASE -> "మెట్లు"
+                ObjectType.TREE_BRANCH -> "చెట్టు కొమ్మ"
+                ObjectType.POLE -> "స్తంభం"
+                ObjectType.CHAIR -> "కుర్చీ"
+                ObjectType.VEHICLE -> "వాహనం"
+                ObjectType.DOOR -> "ద్వారం"
+                ObjectType.WALL -> "గోడ"
+                ObjectType.WATER -> "నీరు"
+                ObjectType.OTHER -> "అడ్డంకి"
+            }
+            AppLanguage.MALAYALAM -> when (objectType) {
+                ObjectType.PERSON -> "വ്യക്തി"
+                ObjectType.STAIRCASE -> "ഗോവണി"
+                ObjectType.TREE_BRANCH -> "മരച്ചില്ല"
+                ObjectType.POLE -> "തൂൺ"
+                ObjectType.CHAIR -> "കസേര"
+                ObjectType.VEHICLE -> "വാഹനം"
+                ObjectType.DOOR -> "വാതിൽ"
+                ObjectType.WALL -> "മതിൽ"
+                ObjectType.WATER -> "വെള്ളം"
+                ObjectType.OTHER -> "തടസ്സം"
+            }
         }
     }
 }

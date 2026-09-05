@@ -3,13 +3,12 @@ package com.visionmate.pro.safety
 import com.visionmate.pro.model.ProximityState
 
 class ProximityStateManager(
-    var cautionRangeCm: Int = 150,  // Configurable, e.g., 1.5m
-    var criticalRangeCm: Int = 30   // Configurable, e.g., 0.3m
+    var cautionRangeCm: Int = 70,   // Caution at 0.7 meters
+    var criticalRangeCm: Int = 30   // Danger at 0.3 meters
 ) {
 
     fun calculateProximityState(distanceCm: Int?, isUpperObstacle: Boolean = false): ProximityState {
         if (isUpperObstacle) {
-            // Upper obstacle detected via camera visual bounding box
             return ProximityState.NEAR
         }
 
@@ -17,8 +16,10 @@ class ProximityStateManager(
             return ProximityState.SAFE
         }
 
+        // Some sensors return 0 when an object is touching the sensor.
+        // We treat anything from 0 to 30cm as TOO_NEAR (Danger).
         return when {
-            distanceCm <= criticalRangeCm -> ProximityState.TOO_NEAR
+            distanceCm in 0..criticalRangeCm -> ProximityState.TOO_NEAR
             distanceCm <= cautionRangeCm -> ProximityState.NEAR
             else -> ProximityState.SAFE
         }

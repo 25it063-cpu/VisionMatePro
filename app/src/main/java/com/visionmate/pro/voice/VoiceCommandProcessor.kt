@@ -5,17 +5,6 @@ import com.visionmate.pro.model.CommandIntent
 import com.visionmate.pro.model.VoiceCommand
 import com.visionmate.pro.language.LanguageManager
 
-sealed class VoiceActionResult {
-    data class SpeakResponse(val message: String) : VoiceActionResult()
-    object TriggerFindCane : VoiceActionResult()
-    object TriggerSos : VoiceActionResult()
-    object CancelSos : VoiceActionResult()
-    data class QueryScene(val text: String) : VoiceActionResult()
-    data class ChangeLanguage(val language: AppLanguage) : VoiceActionResult()
-    data class UpdateSosNumber(val number: String) : VoiceActionResult()
-    data class StartNavigation(val destination: String) : VoiceActionResult()
-}
-
 class VoiceCommandProcessor(
     private val languageManager: LanguageManager
 ) {
@@ -24,6 +13,16 @@ class VoiceCommandProcessor(
         val currentLang = languageManager.currentLanguage.value
 
         return when (command.intent) {
+            CommandIntent.GREETING -> {
+                val msg = when (currentLang) {
+                    AppLanguage.TAMIL -> "வணக்கம். நான் உங்களுக்கு எப்படி உதவ முடியும்?"
+                    AppLanguage.HINDI -> "नमस्ते। मैं आपकी क्या मदद कर सकता हूँ?"
+                    AppLanguage.TELUGU -> "నమస్కారం. నేను మీకు ఎలా సహాయం చేయగలను?"
+                    AppLanguage.MALAYALAM -> "നമസ്കാരം. എനിക്ക് എങ്ങനെ നിങ്ങളെ സഹായിക്കാൻ കഴിയും?"
+                    else -> "Hello. How can I help you today?"
+                }
+                VoiceActionResult.SpeakResponse(msg)
+            }
             CommandIntent.NAVIGATE -> {
                 val destination = command.parameters["destination"]
                 if (!destination.isNullOrBlank()) {
@@ -37,28 +36,16 @@ class VoiceCommandProcessor(
                     VoiceActionResult.SpeakResponse(msg)
                 }
             }
-            CommandIntent.CHANGE_EMERGENCY_CONTACT -> {
-                val number = command.parameters["number"]
-                if (number != null && number.length >= 5) {
-                    VoiceActionResult.UpdateSosNumber(number)
-                } else {
-                    val msg = when (currentLang) {
-                        AppLanguage.TAMIL -> "மன்னிக்கவும், சரியான தொலைபேசி எண்ணைக் கூறவும்."
-                        AppLanguage.HINDI -> "क्षमा करें, कृपया एक सही फ़ोन नंबर बताएं।"
-                        else -> "Sorry, please provide a valid phone number."
-                    }
-                    VoiceActionResult.SpeakResponse(msg)
-                }
-            }
             CommandIntent.CANCEL_SOS -> VoiceActionResult.CancelSos
             CommandIntent.EMERGENCY, CommandIntent.CALL_EMERGENCY -> VoiceActionResult.TriggerSos
             CommandIntent.FIND_CANE -> VoiceActionResult.TriggerFindCane
-            CommandIntent.QUERY_CURRENT_OBSTACLE -> VoiceActionResult.QueryScene(command.rawText)
             CommandIntent.CHANGE_LANGUAGE -> {
-                val rawLower = command.rawText.lowercase()
-                val newLang = when {
-                    rawLower.contains("tamil") || rawLower.contains("தமிழ்") -> AppLanguage.TAMIL
-                    rawLower.contains("hindi") || rawLower.contains("हिन्दी") -> AppLanguage.HINDI
+                val langCode = command.parameters["language"] ?: "en"
+                val newLang = when (langCode) {
+                    "ta" -> AppLanguage.TAMIL
+                    "hi" -> AppLanguage.HINDI
+                    "te" -> AppLanguage.TELUGU
+                    "ml" -> AppLanguage.MALAYALAM
                     else -> AppLanguage.ENGLISH
                 }
                 languageManager.setLanguage(newLang)
@@ -68,18 +55,11 @@ class VoiceCommandProcessor(
                 val msg = when (currentLang) {
                     AppLanguage.ENGLISH -> "Checking cane battery."
                     AppLanguage.TAMIL -> "பிரம்பு பேட்டரி சரிபார்க்கப்படுகிறது."
-                    AppLanguage.HINDI -> "छड़ी की बैटरी जांची जा रही है।"
+                    else -> "Checking battery status."
                 }
                 VoiceActionResult.SpeakResponse(msg)
             }
-            else -> {
-                val msg = when (currentLang) {
-                    AppLanguage.ENGLISH -> "I didn't quite catch that. Try asking what's in front of you."
-                    AppLanguage.TAMIL -> "எனக்கு சரியாக புரியவில்லை. மீண்டும் முயற்சிக்கவும்."
-                    AppLanguage.HINDI -> "मुझे समझ नहीं आया। फिर से प्रयास करें।"
-                }
-                VoiceActionResult.SpeakResponse(msg)
-            }
+            else -> VoiceActionResult.UnknownCommand
         }
     }
 }

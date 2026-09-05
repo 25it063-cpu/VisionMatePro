@@ -1,7 +1,7 @@
 package com.visionmate.pro.communication
 
 class ESP32CommandSender(
-    private val bluetoothManager: BluetoothManager
+    private val bluetoothManager: BluetoothCaneManager
 ) {
 
     fun sendFindMyCane() {

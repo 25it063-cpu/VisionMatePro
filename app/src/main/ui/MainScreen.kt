@@ -3,20 +3,9 @@ package com.visionmate.pro.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontStyle
@@ -25,19 +14,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.visionmate.pro.model.AssistantState
-import com.visionmate.pro.ui.components.AssistantOrb
-import com.visionmate.pro.ui.components.AssistantStateText
-import com.visionmate.pro.ui.components.BluetoothStatus
-import com.visionmate.pro.ui.components.BottomControls
-import com.visionmate.pro.ui.components.CaneBatteryStatus
-import com.visionmate.pro.ui.components.ProximityIndicator
-import com.visionmate.pro.ui.components.SystemStatus
-import com.visionmate.pro.ui.components.VisionMateLogo
-import com.visionmate.pro.ui.theme.BgDark
-import com.visionmate.pro.ui.theme.CyanAccent
-import com.visionmate.pro.ui.theme.DangerRed
-import com.visionmate.pro.ui.theme.TextGray
-import com.visionmate.pro.ui.theme.TextWhite
+import com.visionmate.pro.ui.components.*
+import com.visionmate.pro.ui.theme.*
 import com.visionmate.pro.viewmodel.VisionMateViewModel
 
 @Composable
@@ -49,13 +27,13 @@ fun MainScreen(
     val assistantState by viewModel.assistantState.collectAsState()
     val proximityState by viewModel.proximityState.collectAsState()
     val alertText by viewModel.currentAlertText.collectAsState()
-    val systemHealth by viewModel.systemHealth.collectAsState()
-    val emergencyState by viewModel.emergencyState.collectAsState()
     val currentLanguage by viewModel.currentLanguage.collectAsState()
     val emergencyContact by viewModel.contactManager.contact.collectAsState()
     val recognizedText by viewModel.speechRecognizerManager.recognizedText.collectAsState()
+    val pairedDevices by viewModel.pairedDevices.collectAsState()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showDeviceDialog by remember { mutableStateOf(false) }
 
     Box(
         modifier = modifier
@@ -78,14 +56,20 @@ fun MainScreen(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 VisionMateLogo(modifier = Modifier.padding(top = 16.dp))
                 Spacer(modifier = Modifier.height(16.dp))
-                BluetoothStatus(status = caneState.connectionState.bluetoothStatus, onClick = { viewModel.refreshPairedDevices() })
+                
+                BluetoothStatus(
+                    status = caneState.connectionState.bluetoothStatus,
+                    onClick = {
+                        viewModel.refreshPairedDevices()
+                        showDeviceDialog = true
+                    }
+                )
+                
                 Spacer(modifier = Modifier.height(8.dp))
                 CaneBatteryStatus(
                     batteryPercent = caneState.sensorData.caneBatteryPercent,
                     batteryState = caneState.batteryState
                 )
-                Spacer(modifier = Modifier.height(8.dp))
-                SystemStatus(isVisionReady = systemHealth.cameraStream.isReady)
                 Spacer(modifier = Modifier.height(12.dp))
                 ProximityIndicator(proximityState = proximityState)
             }
@@ -95,7 +79,6 @@ fun MainScreen(
                 Spacer(modifier = Modifier.height(24.dp))
                 AssistantStateText(text = alertText, state = assistantState)
                 
-                // Debug / Help text showing what the phone actually heard
                 if (recognizedText.isNotEmpty() && assistantState != AssistantState.LISTENING) {
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
@@ -114,7 +97,7 @@ fun MainScreen(
                         AssistantState.LISTENING -> "🎤 Listening..."
                         AssistantState.PROCESSING -> "⚡ Thinking..."
                         AssistantState.SPEAKING -> "🗣️ Speaking..."
-                        AssistantState.EMERGENCY -> "🆘 Emergency Countdown (${emergencyState.remainingSeconds}s)"
+                        AssistantState.EMERGENCY -> "🆘 Emergency Countdown"
                         else -> "🎤 Ready"
                     },
                     fontSize = 14.sp,
@@ -141,6 +124,14 @@ fun MainScreen(
                 onSaveContact = { name, phone -> viewModel.updateEmergencyContact(name, phone) },
                 onFindCaneClicked = { viewModel.toggleFindMyCane() },
                 onDismiss = { showSettingsDialog = false }
+            )
+        }
+
+        if (showDeviceDialog) {
+            DeviceSelectionDialog(
+                pairedDevices = pairedDevices,
+                onDeviceSelected = { address -> viewModel.connectToDevice(address) },
+                onDismiss = { showDeviceDialog = false }
             )
         }
     }

@@ -1,13 +1,13 @@
 package com.visionmate.pro.emergency
 
-import com.visionmate.pro.communication.BluetoothManager
+import com.visionmate.pro.communication.BluetoothCaneManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class SOSManager(
     private val emergencyModeManager: EmergencyModeManager,
-    private val bluetoothManager: BluetoothManager
+    private val bluetoothManager: BluetoothCaneManager
 ) {
 
     private val scope = CoroutineScope(Dispatchers.Default)

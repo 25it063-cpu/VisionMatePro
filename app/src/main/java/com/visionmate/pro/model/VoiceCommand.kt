@@ -11,6 +11,8 @@ enum class CommandIntent {
     BATTERY_STATUS,
     FIND_CANE,
     CANCEL_SOS,
+    GREETING,
+    HELP,
     UNKNOWN
 }
 

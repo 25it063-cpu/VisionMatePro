@@ -1,7 +1,7 @@
 package com.visionmate.pro.repository
 
 import com.visionmate.pro.ai.ObjectDetector
-import com.visionmate.pro.communication.BluetoothManager
+import com.visionmate.pro.communication.BluetoothCaneManager
 import com.visionmate.pro.communication.CameraStreamReceiver
 import com.visionmate.pro.communication.ESP32CommandSender
 import com.visionmate.pro.data.PreferencesRepository
@@ -15,7 +15,7 @@ import com.visionmate.pro.safety.SystemHealthMonitor
 import kotlinx.coroutines.flow.StateFlow
 
 class VisionMateRepository(
-    val bluetoothManager: BluetoothManager,
+    val bluetoothManager: BluetoothCaneManager,
     val cameraStreamReceiver: CameraStreamReceiver,
     val objectDetector: ObjectDetector,
     val esp32CommandSender: ESP32CommandSender,

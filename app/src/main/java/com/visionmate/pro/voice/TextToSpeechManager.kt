@@ -42,7 +42,11 @@ class TextToSpeechManager(
         }
     }
 
-    fun speak(text: String, language: AppLanguage, onComplete: (() -> Unit)? = null) {
+    /**
+     * Speaks the given text.
+     * @param flush If true, stops current speech and speaks immediately. If false, adds to queue.
+     */
+    fun speak(text: String, language: AppLanguage, flush: Boolean = true, onComplete: (() -> Unit)? = null) {
         if (!isInitialized || text.trim().isEmpty()) {
             onComplete?.invoke()
             return
@@ -55,8 +59,9 @@ class TextToSpeechManager(
             tts?.language = Locale.US
         }
 
+        val queueMode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
         val utteranceId = "utterance_${System.currentTimeMillis()}"
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+        tts?.speak(text, queueMode, null, utteranceId)
     }
 
     fun stop() {

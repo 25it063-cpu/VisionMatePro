@@ -7,14 +7,14 @@ data class SubsystemStatus(
 )
 
 data class SystemHealth(
-    val bluetooth: SubsystemStatus = SubsystemStatus("Bluetooth", true, "Connected"),
-    val esp32: SubsystemStatus = SubsystemStatus("ESP32 Core", true, "Active"),
-    val esp32Cam: SubsystemStatus = SubsystemStatus("ESP32-CAM", true, "Streaming"),
-    val cameraStream: SubsystemStatus = SubsystemStatus("Camera Stream", true, "Frames OK"),
-    val aiVision: SubsystemStatus = SubsystemStatus("AI Vision Engine", true, "Ready"),
-    val ultrasonicSensors: SubsystemStatus = SubsystemStatus("Ultrasonic Array", true, "Tri-axis Active"),
-    val batteryTelemetry: SubsystemStatus = SubsystemStatus("Battery Telemetry", true, "Receiving Data"),
-    val sosCommunication: SubsystemStatus = SubsystemStatus("SOS Link", true, "Channel Standby")
+    val bluetooth: SubsystemStatus = SubsystemStatus("Bluetooth", false, "Disconnected"),
+    val esp32: SubsystemStatus = SubsystemStatus("ESP32 Core", false, "Offline"),
+    val esp32Cam: SubsystemStatus = SubsystemStatus("ESP32-CAM", false, "No Feed"),
+    val cameraStream: SubsystemStatus = SubsystemStatus("Camera Stream", false, "Waiting..."),
+    val aiVision: SubsystemStatus = SubsystemStatus("AI Vision Engine", false, "Initializing..."),
+    val ultrasonicSensors: SubsystemStatus = SubsystemStatus("Ultrasonic Array", false, "Offline"),
+    val batteryTelemetry: SubsystemStatus = SubsystemStatus("Battery Telemetry", false, "No Data"),
+    val sosCommunication: SubsystemStatus = SubsystemStatus("SOS Link", false, "Disconnected")
 ) {
     val isFullyOperational: Boolean
         get() = bluetooth.isReady && esp32.isReady && esp32Cam.isReady &&
