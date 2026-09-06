@@ -10,7 +10,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -54,8 +60,11 @@ fun MainScreen(
     val currentLanguage by viewModel.currentLanguage.collectAsState()
     val emergencyContact by viewModel.contactManager.contact.collectAsState()
     val recognizedText by viewModel.speechRecognizerManager.recognizedText.collectAsState()
+    val preferences by viewModel.preferencesRepository.preferences.collectAsState()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showCameraDialog by remember { mutableStateOf(false) }
+    var cameraUrlInput by remember(preferences.cameraStreamUrl) { mutableStateOf(preferences.cameraStreamUrl) }
 
     Box(
         modifier = modifier
@@ -85,7 +94,10 @@ fun MainScreen(
                     batteryState = caneState.batteryState
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                SystemStatus(isVisionReady = systemHealth.cameraStream.isReady)
+                SystemStatus(
+                    isVisionReady = systemHealth.cameraStream.isReady,
+                    onClick = { showCameraDialog = true }
+                )
                 Spacer(modifier = Modifier.height(12.dp))
                 ProximityIndicator(proximityState = proximityState)
             }
@@ -113,9 +125,9 @@ fun MainScreen(
                     text = when (assistantState) {
                         AssistantState.LISTENING -> "🎤 Listening..."
                         AssistantState.PROCESSING -> "⚡ Thinking..."
-                        AssistantState.SPEAKING -> "🗣️ Speaking..."
-                        AssistantState.EMERGENCY -> "🆘 Emergency Countdown (${emergencyState.remainingSeconds}s)"
-                        else -> "🎤 Ready"
+                        AssistantState.SPEAKING -> "🔊 Speaking..."
+                        AssistantState.EMERGENCY -> "🚨 EMERGENCY ACTIVE"
+                        else -> "Tap anywhere or hold cane button to speak"
                     },
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium,
@@ -141,6 +153,46 @@ fun MainScreen(
                 onSaveContact = { name, phone -> viewModel.updateEmergencyContact(name, phone) },
                 onFindCaneClicked = { viewModel.toggleFindMyCane() },
                 onDismiss = { showSettingsDialog = false }
+            )
+        }
+
+        if (showCameraDialog) {
+            AlertDialog(
+                onDismissRequest = { showCameraDialog = false },
+                title = { Text(text = "📷 ESP32-CAM Stream Settings", color = TextWhite) },
+                text = {
+                    Column {
+                        Text(
+                            text = if (systemHealth.cameraStream.isReady) "Status: Connected & Streaming" else "Status: Not Connected (Close browser tab & turn off mobile data)",
+                            color = if (systemHealth.cameraStream.isReady) CyanAccent else DangerRed,
+                            fontSize = 13.sp
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = cameraUrlInput,
+                            onValueChange = { cameraUrlInput = it },
+                            label = { Text("Stream URL") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            viewModel.updateCameraStreamUrl(cameraUrlInput)
+                            showCameraDialog = false
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyanAccent)
+                    ) {
+                        Text("Connect", color = BgDark)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCameraDialog = false }) {
+                        Text("Cancel", color = TextGray)
+                    }
+                },
+                containerColor = BgDark
             )
         }
     }

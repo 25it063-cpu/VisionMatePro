@@ -10,7 +10,7 @@ class WifiManager {
     private val _streamStatus = MutableStateFlow(ConnectionStatus.CONNECTED)
     val streamStatus: StateFlow<ConnectionStatus> = _streamStatus.asStateFlow()
 
-    private val _streamUrl = MutableStateFlow("http://192.168.4.1:81/stream")
+    private val _streamUrl = MutableStateFlow("http://192.168.0.9:81/stream")
     val streamUrl: StateFlow<String> = _streamUrl.asStateFlow()
 
     fun updateStreamUrl(url: String) {

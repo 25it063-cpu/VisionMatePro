@@ -16,8 +16,7 @@ import java.util.concurrent.TimeUnit
 class RealCameraStreamReceiver : CameraStreamReceiver {
 
     companion object {
-        // IMPORTANT: Ensure this matches exactly what is in your browser!
-        const val STREAM_URL = "http://10.112.154.28:81/stream"
+        const val STREAM_URL = "http://192.168.0.9:81/stream"
         private const val TAG = "CameraStream"
         private const val BUFFER_SIZE = 16384 // 16KB high-speed buffer
     }
@@ -26,8 +25,9 @@ class RealCameraStreamReceiver : CameraStreamReceiver {
     private var streamJob: Job? = null
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS) // 0 = infinite streaming without timeout
+        .retryOnConnectionFailure(true)
         .build()
 
     private val _isStreaming = MutableStateFlow(false)
@@ -49,75 +49,102 @@ class RealCameraStreamReceiver : CameraStreamReceiver {
     private fun monitorFrameHealth() {
         scope.launch {
             while (isActive) {
-                delay(3000)
-                _isFrameLive.value = (System.currentTimeMillis() - lastFrameTime) < 5000
+                delay(2000)
+                val isLive = (System.currentTimeMillis() - lastFrameTime) < 5000
+                _isFrameLive.value = isLive
             }
         }
     }
 
     override fun startStreaming(url: String) {
         if (_isStreaming.value) return
-        Log.i(TAG, "Starting stream: $url")
+        Log.i(TAG, "Starting camera stream: $url")
         
+        // List of candidate URLs to try in order
+        val fallbackUrls = listOf(
+            url,
+            url.replace(":81/stream", ":80/stream"),
+            url.replace(":81/stream", "/stream"),
+            url.replace(":81/stream", ":80/capture")
+        ).distinct()
+
         streamJob?.cancel()
         streamJob = scope.launch {
+            var urlIndex = 0
             while (isActive) {
+                val currentTargetUrl = fallbackUrls[urlIndex % fallbackUrls.size]
                 try {
-                    val request = Request.Builder().url(url).build()
-                    client.newCall(request).execute().use { response ->
-                        if (!response.isSuccessful) {
-                            _isStreaming.value = false
-                            _isFrameLive.value = false
-                            delay(3000)
-                            return@use
-                        }
+                    Log.d(TAG, "Connecting to stream: $currentTargetUrl")
+                    val request = Request.Builder().url(currentTargetUrl).build()
+                    val response = client.newCall(request).execute()
 
-                        _isStreaming.value = true
-                        val inputStream = BufferedInputStream(response.body?.byteStream() ?: return@use)
-                        val frameBuffer = ByteArrayOutputStream()
-                        val buffer = ByteArray(BUFFER_SIZE)
-                        
-                        var prevByte = -1
-                        while (isActive && _isStreaming.value) {
-                            val bytesRead = inputStream.read(buffer)
-                            if (bytesRead <= 0) break
-                            
-                            for (i in 0 until bytesRead) {
-                                val b = buffer[i].toInt() and 0xFF
-                                frameBuffer.write(b)
+                    if (!response.isSuccessful) {
+                        Log.e(TAG, "Failed to connect to $currentTargetUrl: ${response.code}")
+                        _isStreaming.value = false
+                        _isFrameLive.value = false
+                        response.close()
+                        urlIndex++
+                        delay(2000)
+                        continue
+                    }
 
-                                // Detect JPEG end marker (0xFF 0xD9)
-                                if (prevByte == 0xFF && b == 0xD9) {
-                                    processJpeg(frameBuffer.toByteArray())
-                                    frameBuffer.reset()
-                                }
-                                prevByte = b
+                    _isStreaming.value = true
+                    val inputStream = BufferedInputStream(response.body?.byteStream() ?: run {
+                        response.close()
+                        urlIndex++
+                        delay(2000)
+                        return@launch
+                    })
+
+                    val frameBuffer = ByteArrayOutputStream()
+                    val buffer = ByteArray(BUFFER_SIZE)
+                    var prevByte = -1
+
+                    while (isActive && _isStreaming.value) {
+                        val bytesRead = inputStream.read(buffer)
+                        if (bytesRead == -1) break
+
+                        for (i in 0 until bytesRead) {
+                            val b = buffer[i].toInt() and 0xFF
+                            frameBuffer.write(b)
+
+                            // Detect JPEG end marker (0xFF 0xD9)
+                            if (prevByte == 0xFF && b == 0xD9) {
+                                processJpeg(frameBuffer.toByteArray())
+                                frameBuffer.reset()
                             }
+                            prevByte = b
                         }
                     }
+                    response.close()
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    Log.e(TAG, "Stream error: ${e.message}")
+                    Log.e(TAG, "Stream error on $currentTargetUrl: ${e.message}")
                     _isStreaming.value = false
                     _isFrameLive.value = false
-                    delay(3000)
+                    urlIndex++
+                    delay(2000)
                 }
             }
         }
     }
 
     private fun processJpeg(data: ByteArray) {
+        val t0 = System.currentTimeMillis()
         val startIdx = findJpegStart(data)
         if (startIdx != -1) {
             val bitmap = try {
                 BitmapFactory.decodeByteArray(data, startIdx, data.size - startIdx)
             } catch (e: Exception) { null }
+            val decodeMs = System.currentTimeMillis() - t0
             
             if (bitmap != null) {
-                lastFrameTime = System.currentTimeMillis()
+                val now = System.currentTimeMillis()
+                lastFrameTime = now
                 _isFrameLive.value = true
                 frameCounter++
-                _latestFrame.value = CameraFrame(frameCounter, bitmap, bitmap.width, bitmap.height)
+                _latestFrame.value = CameraFrame(frameCounter, bitmap, bitmap.width, bitmap.height, timestamp = now)
+                Log.i(TAG, "DetectionTiming: FrameID=$frameCounter Decode=${decodeMs}ms Size=${bitmap.width}x${bitmap.height}")
             }
         }
     }

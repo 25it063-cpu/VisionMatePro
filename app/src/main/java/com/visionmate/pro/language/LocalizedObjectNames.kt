@@ -17,6 +17,9 @@ object LocalizedObjectNames {
                 ObjectType.DOOR -> "door"
                 ObjectType.WALL -> "wall"
                 ObjectType.WATER -> "water"
+                ObjectType.ANIMAL -> "animal"
+                ObjectType.STREET_OBJECT -> "street object"
+                ObjectType.HOUSEHOLD_ITEM -> "item"
                 ObjectType.OTHER -> "obstacle"
             }
             AppLanguage.TAMIL -> when (objectType) {
@@ -29,6 +32,9 @@ object LocalizedObjectNames {
                 ObjectType.DOOR -> "கதவு"
                 ObjectType.WALL -> "சுவர்"
                 ObjectType.WATER -> "தண்ணீர்"
+                ObjectType.ANIMAL -> "விலங்கு"
+                ObjectType.STREET_OBJECT -> "சாலைப் பொருள்"
+                ObjectType.HOUSEHOLD_ITEM -> "பொருள்"
                 ObjectType.OTHER -> "தடை"
             }
             AppLanguage.HINDI -> when (objectType) {
@@ -41,6 +47,9 @@ object LocalizedObjectNames {
                 ObjectType.DOOR -> "दरवाजा"
                 ObjectType.WALL -> "दीवार"
                 ObjectType.WATER -> "पानी"
+                ObjectType.ANIMAL -> "जानवर"
+                ObjectType.STREET_OBJECT -> "सड़क की वस्तु"
+                ObjectType.HOUSEHOLD_ITEM -> "सामान"
                 ObjectType.OTHER -> "बाधा"
             }
             AppLanguage.TELUGU -> when (objectType) {
@@ -53,6 +62,9 @@ object LocalizedObjectNames {
                 ObjectType.DOOR -> "ద్వారం"
                 ObjectType.WALL -> "గోడ"
                 ObjectType.WATER -> "నీరు"
+                ObjectType.ANIMAL -> "జంతువు"
+                ObjectType.STREET_OBJECT -> "వీధి వస్తువు"
+                ObjectType.HOUSEHOLD_ITEM -> "వస్తువు"
                 ObjectType.OTHER -> "అడ్డంకి"
             }
             AppLanguage.MALAYALAM -> when (objectType) {
@@ -60,11 +72,14 @@ object LocalizedObjectNames {
                 ObjectType.STAIRCASE -> "ഗോവണി"
                 ObjectType.TREE_BRANCH -> "മരച്ചില്ല"
                 ObjectType.POLE -> "തൂൺ"
-                ObjectType.CHAIR -> "കസേര"
-                ObjectType.VEHICLE -> "വാഹനം"
+                ObjectType.CHAIR -> "കസേర"
+                ObjectType.VEHICLE -> "വാഹనం"
                 ObjectType.DOOR -> "വാതിൽ"
                 ObjectType.WALL -> "മതിൽ"
                 ObjectType.WATER -> "വെള്ളം"
+                ObjectType.ANIMAL -> "മൃഗം"
+                ObjectType.STREET_OBJECT -> "തെരുവ് വസ്തു"
+                ObjectType.HOUSEHOLD_ITEM -> "വസ്തു"
                 ObjectType.OTHER -> "തടസ്സം"
             }
         }

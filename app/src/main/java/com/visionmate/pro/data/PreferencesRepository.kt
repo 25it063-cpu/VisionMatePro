@@ -15,7 +15,8 @@ data class UserPreferences(
     val emergencyContactPhone: String = "+919094741350",
     val isHapticsEnabled: Boolean = true,
     val isTtsEnabled: Boolean = true,
-    val languageCode: String = "en"
+    val languageCode: String = "en",
+    val cameraStreamUrl: String = "http://192.168.0.9:81/stream"
 )
 
 class PreferencesRepository(context: Context) {
@@ -33,7 +34,8 @@ class PreferencesRepository(context: Context) {
             emergencyContactPhone = prefs.getString("emergency_phone", "+919094741350") ?: "+919094741350",
             isHapticsEnabled = prefs.getBoolean("haptics_enabled", true),
             isTtsEnabled = prefs.getBoolean("tts_enabled", true),
-            languageCode = prefs.getString("language_code", "en") ?: "en"
+            languageCode = prefs.getString("language_code", "en") ?: "en",
+            cameraStreamUrl = prefs.getString("camera_url", "http://192.168.0.9:81/stream") ?: "http://192.168.0.9:81/stream"
         )
     }
 
@@ -64,5 +66,12 @@ class PreferencesRepository(context: Context) {
             emergencyContactName = name,
             emergencyContactPhone = phone
         )
+    }
+
+    fun updateCameraUrl(url: String) {
+        prefs.edit {
+            putString("camera_url", url)
+        }
+        _preferences.value = _preferences.value.copy(cameraStreamUrl = url)
     }
 }

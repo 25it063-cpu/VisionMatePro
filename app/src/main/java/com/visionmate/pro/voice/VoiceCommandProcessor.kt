@@ -40,7 +40,13 @@ class VoiceCommandProcessor(
             CommandIntent.EMERGENCY, CommandIntent.CALL_EMERGENCY -> VoiceActionResult.TriggerSos
             CommandIntent.FIND_CANE -> VoiceActionResult.TriggerFindCane
             CommandIntent.CHANGE_LANGUAGE -> {
-                val langCode = command.parameters["language"] ?: "en"
+                val langCode = command.parameters["language"] ?: when {
+                    command.rawText.contains("தமிழ்") || command.rawText.contains("tamil", ignoreCase = true) || command.rawText.contains("தமி") -> "ta"
+                    command.rawText.contains("हिंदी") || command.rawText.contains("हिन्दी") || command.rawText.contains("hindi", ignoreCase = true) -> "hi"
+                    command.rawText.contains("తెలుగు") || command.rawText.contains("telugu", ignoreCase = true) -> "te"
+                    command.rawText.contains("മലയാളം") || command.rawText.contains("malayalam", ignoreCase = true) -> "ml"
+                    else -> "en"
+                }
                 val newLang = when (langCode) {
                     "ta" -> AppLanguage.TAMIL
                     "hi" -> AppLanguage.HINDI

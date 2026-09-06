@@ -11,15 +11,10 @@ import com.visionmate.pro.model.ConnectionStatus
 import com.visionmate.pro.model.SensorData
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import java.io.BufferedReader
 import java.io.IOException
-import java.io.InputStreamReader
+import java.io.InputStream
 import java.util.UUID
 
-/**
- * Optimized Bluetooth Manager for the Smart Cane.
- * Implements fast-fail timeouts, retries, and high-precision logging.
- */
 interface BluetoothCaneManager {
     val connectionStatus: StateFlow<ConnectionStatus>
     val sensorDataFlow: StateFlow<SensorData>
@@ -62,67 +57,33 @@ class RealBluetoothManager(private val context: Context) : BluetoothCaneManager 
         if (_connectionStatus.value == ConnectionStatus.CONNECTED) return
         
         _lastError.value = null
+        _connectionStatus.value = ConnectionStatus.CONNECTING
+        
         connectJob?.cancel()
         connectJob = scope.launch {
-            val totalStartTime = System.currentTimeMillis()
-            var attempt = 0
-            val maxAttempts = 3
+            try {
+                val adapter = bluetoothAdapter ?: throw IOException("BT not supported")
+                if (!adapter.isEnabled) throw IOException("Bluetooth is off")
 
-            while (attempt < maxAttempts && _connectionStatus.value != ConnectionStatus.CONNECTED) {
-                attempt++
-                Log.i("BTManager", "connect start - attempt $attempt")
-                _connectionStatus.value = ConnectionStatus.CONNECTING
+                if (adapter.isDiscovering) adapter.cancelDiscovery()
 
-                try {
-                    val adapter = bluetoothAdapter ?: throw IOException("Bluetooth hardware missing")
-                    if (!adapter.isEnabled) throw IOException("Bluetooth disabled")
-
-                    if (adapter.isDiscovering) {
-                        Log.d("BTManager", "Force-cancelling discovery")
-                        adapter.cancelDiscovery()
-                    }
-
-                    val device = adapter.getRemoteDevice(deviceAddress)
-                    
-                    // withTimeout prevents the connect call from hanging for 20+ seconds
-                    withTimeout(8000L) { 
-                        socket = try {
-                            device.createRfcommSocketToServiceRecord(SPP_UUID).also {
-                                Log.d("BTManager", "socket created (standard)")
-                            }
-                        } catch (e: Exception) {
-                            val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
-                            (method.invoke(device, 1) as BluetoothSocket).also {
-                                Log.d("BTManager", "socket created (fallback)")
-                            }
-                        }
-                        
-                        socket?.connect()
-                    }
-
-                    _connectionStatus.value = ConnectionStatus.CONNECTED
-                    Log.i("BTManager", "connected")
-                    
-                    val connectTime = System.currentTimeMillis() - totalStartTime
-                    Log.i("BTManager", "total time to establish link: ${connectTime}ms")
-
-                    Log.d("BTManager", "listening started")
-                    startListening()
-
+                val device = adapter.getRemoteDevice(deviceAddress)
+                
+                socket = try {
+                    device.createRfcommSocketToServiceRecord(SPP_UUID).apply { connect() }
                 } catch (e: Exception) {
-                    Log.e("BTManager", "Attempt $attempt failed: ${e.message}")
-                    socket?.close()
-                    socket = null
-                    
-                    if (attempt < maxAttempts) {
-                        delay(1000) // Quick 1s retry interval
-                    } else {
-                        _lastError.value = e.message
-                        _connectionStatus.value = ConnectionStatus.ERROR
-                        delay(2000)
-                        _connectionStatus.value = ConnectionStatus.DISCONNECTED
-                    }
+                    val method = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                    val fallbackSocket = method.invoke(device, 1) as BluetoothSocket
+                    fallbackSocket.apply { connect() }
                 }
+                
+                _connectionStatus.value = ConnectionStatus.CONNECTED
+                startListening()
+            } catch (e: Exception) {
+                _lastError.value = e.message
+                _connectionStatus.value = ConnectionStatus.ERROR
+                delay(2000)
+                _connectionStatus.value = ConnectionStatus.DISCONNECTED
             }
         }
     }
@@ -130,41 +91,64 @@ class RealBluetoothManager(private val context: Context) : BluetoothCaneManager 
     private fun startListening() {
         receiveJob?.cancel()
         receiveJob = scope.launch {
-            try {
-                val reader = BufferedReader(InputStreamReader(socket?.inputStream))
-                while (isActive && _connectionStatus.value == ConnectionStatus.CONNECTED) {
-                    val line = reader.readLine() ?: break
-                    if (line.isNotBlank()) {
-                        val updatedData = DataParser.parseSensorString(line)
-                        _sensorDataFlow.value = updatedData
-                        if (updatedData.isPhysicalSosPressed) _sosSignalEvents.tryEmit(Unit)
+            val buffer = ByteArray(1024)
+            var accumulator = ""
+            val inputStream: InputStream = socket?.inputStream ?: return@launch
+            
+            while (isActive && _connectionStatus.value == ConnectionStatus.CONNECTED) {
+                try {
+                    val bytes = inputStream.read(buffer)
+                    if (bytes == -1) {
+                        Log.w("BTManager", "Bluetooth socket reached EOF (remote device disconnected)")
+                        break
                     }
+                    if (bytes > 0) {
+                        val chunk = String(buffer, 0, bytes)
+                        accumulator += chunk
+                        
+                        // Check if the accumulator contains a line ending
+                        if (accumulator.contains("\n") || accumulator.contains("\r")) {
+                            val lines = accumulator.split(Regex("[\r\n]+"))
+                            // Process all lines that are followed by a newline
+                            for (i in 0 until lines.size - 1) {
+                                processIncomingLine(lines[i])
+                            }
+                            // Keep the last part (it might be a partial line or empty)
+                            accumulator = lines.last()
+                        }
+                    }
+                } catch (e: IOException) {
+                    Log.w("BTManager", "Bluetooth read error: ${e.message}")
+                    break
                 }
-            } catch (e: IOException) {
-                Log.e("BTManager", "Data stream error: ${e.message}")
-            } finally {
-                disconnect()
             }
+            disconnect()
+        }
+    }
+
+    private fun processIncomingLine(line: String) {
+        val trimmed = line.trim()
+        if (trimmed.isBlank()) return
+        try {
+            val updatedData = DataParser.parseSensorString(trimmed)
+            _sensorDataFlow.value = updatedData
+            if (updatedData.isPhysicalSosPressed) _sosSignalEvents.tryEmit(Unit)
+        } catch (e: Exception) {
+            Log.e("BTManager", "Parse error: $trimmed")
         }
     }
 
     override fun disconnect() {
-        if (_connectionStatus.value == ConnectionStatus.DISCONNECTED && socket == null) return
         _connectionStatus.value = ConnectionStatus.DISCONNECTED
         receiveJob?.cancel()
         try { socket?.close() } catch (e: Exception) { }
         socket = null
-        _sensorDataFlow.value = SensorData()
+        _sensorDataFlow.value = SensorData.invalid()
     }
 
     override fun sendCommand(command: String) {
         scope.launch {
-            try {
-                socket?.outputStream?.write(command.toByteArray())
-                socket?.outputStream?.flush()
-            } catch (e: Exception) {
-                Log.e("BTManager", "Command failed: $command")
-            }
+            try { socket?.outputStream?.write(command.toByteArray()) } catch (e: Exception) { }
         }
     }
 

@@ -11,6 +11,6 @@ data class ConnectionState(
     val bluetoothStatus: ConnectionStatus = ConnectionStatus.DISCONNECTED,
     val wifiStreamStatus: ConnectionStatus = ConnectionStatus.DISCONNECTED,
     val caneDeviceName: String = "ESP32-SmartCane-Pro",
-    val cameraIpAddress: String = "192.168.4.1",
+    val cameraIpAddress: String = "192.168.0.9",
     val lastHeartbeatTime: Long = 0L
 )

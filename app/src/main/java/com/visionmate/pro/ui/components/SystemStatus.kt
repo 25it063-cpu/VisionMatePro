@@ -18,10 +18,12 @@ import androidx.compose.ui.unit.sp
 import com.visionmate.pro.ui.theme.CyanAccent
 import com.visionmate.pro.ui.theme.DangerRed
 import com.visionmate.pro.ui.theme.TextWhite
+import androidx.compose.foundation.clickable
 
 @Composable
 fun SystemStatus(
     isVisionReady: Boolean,
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val color = if (isVisionReady) CyanAccent else DangerRed
@@ -29,7 +31,9 @@ fun SystemStatus(
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier
+        modifier = modifier.then(
+            if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
+        )
     ) {
         Box(
             modifier = Modifier

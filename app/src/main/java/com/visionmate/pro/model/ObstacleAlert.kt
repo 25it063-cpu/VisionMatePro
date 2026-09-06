@@ -17,5 +17,6 @@ data class ObstacleAlert(
     val distanceCm: Int?,
     val displayText: String,
     val speechText: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val isDistanceUpgrade: Boolean = false
 )

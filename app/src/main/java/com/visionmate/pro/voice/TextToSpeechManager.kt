@@ -1,6 +1,7 @@
 package com.visionmate.pro.voice
 
 import android.content.Context
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import com.visionmate.pro.model.AppLanguage
@@ -27,41 +28,40 @@ class TextToSpeechManager(
         if (status == TextToSpeech.SUCCESS) {
             isInitialized = true
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {
-                    _isSpeaking.value = true
-                }
-
-                override fun onDone(utteranceId: String?) {
-                    _isSpeaking.value = false
-                }
-
-                override fun onError(utteranceId: String?) {
-                    _isSpeaking.value = false
-                }
+                override fun onStart(utteranceId: String?) { _isSpeaking.value = true }
+                override fun onDone(utteranceId: String?) { _isSpeaking.value = false }
+                override fun onError(utteranceId: String?) { _isSpeaking.value = false }
             })
         }
     }
 
     /**
-     * Speaks the given text.
-     * @param flush If true, stops current speech and speaks immediately. If false, adds to queue.
+     * Speaks the given text loudly and clearly.
+     * @param urgent If true, speaks faster and at a higher pitch for danger.
      */
-    fun speak(text: String, language: AppLanguage, flush: Boolean = true, onComplete: (() -> Unit)? = null) {
-        if (!isInitialized || text.trim().isEmpty()) {
-            onComplete?.invoke()
-            return
-        }
+    fun speak(text: String, language: AppLanguage, flush: Boolean = true, urgent: Boolean = false) {
+        if (!isInitialized || text.trim().isEmpty()) return
 
         val locale = Locale.forLanguageTag(language.ttsLocaleTag)
-        val result = tts?.setLanguage(locale)
+        tts?.setLanguage(locale)
+        
+        if (urgent) {
+            tts?.setPitch(1.3f)
+            tts?.setSpeechRate(1.2f)
+        } else {
+            tts?.setPitch(1.0f)
+            tts?.setSpeechRate(1.0f)
+        }
 
-        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-            tts?.language = Locale.US
+        // Force 100% volume for safety alerts
+        val params = Bundle().apply {
+            putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
         }
 
         val queueMode = if (flush) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-        val utteranceId = "utterance_${System.currentTimeMillis()}"
-        tts?.speak(text, queueMode, null, utteranceId)
+        val utteranceId = "alert_${System.currentTimeMillis()}"
+        
+        tts?.speak(text, queueMode, params, utteranceId)
     }
 
     fun stop() {

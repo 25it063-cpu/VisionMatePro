@@ -10,6 +10,9 @@ enum class ObjectType {
     DOOR,
     WALL,
     WATER,
+    ANIMAL,
+    STREET_OBJECT,
+    HOUSEHOLD_ITEM,
     OTHER
 }
 
