@@ -43,8 +43,12 @@ object DataParser {
         var sos = accumulatedData.isPhysicalSosPressed
 
         try {
-            // 1. Primary parser: SENSOR|SEQ=...|F=...
-            if (trimmed.startsWith("SENSOR|", ignoreCase = true) || trimmed.contains("|")) {
+            // 0. Explicit physical SOS signal from ESP32 (e.g. Serial.println("SOS_TRIGGERED");)
+            if (trimmed.equals("SOS_TRIGGERED", ignoreCase = true) ||
+                trimmed.equals("SOS_PRESSED", ignoreCase = true) ||
+                trimmed.contains("SOS_TRIGGERED", ignoreCase = true)) {
+                sos = true
+            } else if (trimmed.startsWith("SENSOR|", ignoreCase = true) || trimmed.contains("|")) {
                 val tokens = trimmed.split("|")
                 for (token in tokens) {
                     val kv = token.split("=")
@@ -145,7 +149,7 @@ object DataParser {
             Log.e("DataParser", "Error parsing: $raw, error: ${e.message}")
         }
 
-        accumulatedData = SensorData(
+        val resultData = SensorData(
             frontDistanceCm = front,
             leftDistanceCm = left,
             rightDistanceCm = right,
@@ -160,6 +164,13 @@ object DataParser {
             timestamp = System.currentTimeMillis()
         )
 
-        return accumulatedData
+        // Store non-SOS state in accumulatedData so subsequent regular telemetry lines don't re-trigger SOS
+        accumulatedData = if (sos) {
+            resultData.copy(isPhysicalSosPressed = false)
+        } else {
+            resultData
+        }
+
+        return resultData
     }
 }

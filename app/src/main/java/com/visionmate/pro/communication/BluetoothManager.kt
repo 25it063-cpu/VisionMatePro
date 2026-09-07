@@ -132,7 +132,10 @@ class RealBluetoothManager(private val context: Context) : BluetoothCaneManager 
         try {
             val updatedData = DataParser.parseSensorString(trimmed)
             _sensorDataFlow.value = updatedData
-            if (updatedData.isPhysicalSosPressed) _sosSignalEvents.tryEmit(Unit)
+            if (updatedData.isPhysicalSosPressed || trimmed.contains("SOS_TRIGGERED", ignoreCase = true) || trimmed.contains("SOS_PRESSED", ignoreCase = true)) {
+                Log.i("BTManager", "Physical SOS signal detected: $trimmed. Emitting SOS event!")
+                _sosSignalEvents.tryEmit(Unit)
+            }
         } catch (e: Exception) {
             Log.e("BTManager", "Parse error: $trimmed")
         }

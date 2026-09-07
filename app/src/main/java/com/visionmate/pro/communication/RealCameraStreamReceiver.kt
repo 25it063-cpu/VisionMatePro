@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 class RealCameraStreamReceiver : CameraStreamReceiver {
 
     companion object {
-        const val STREAM_URL = "http://192.168.0.9:81/stream"
+        const val STREAM_URL = "http://10.150.60.28:81/stream"
         private const val TAG = "CameraStream"
         private const val BUFFER_SIZE = 16384 // 16KB high-speed buffer
     }

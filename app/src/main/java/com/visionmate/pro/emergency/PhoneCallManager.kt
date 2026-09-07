@@ -15,7 +15,16 @@ class PhoneCallManager(private val context: Context) {
             }
             context.startActivity(intent)
         } catch (e: SecurityException) {
-            Toast.makeText(context, "Call permission denied", Toast.LENGTH_SHORT).show()
+            // Fallback to ACTION_DIAL if CALL_PHONE permission is not granted at runtime
+            try {
+                val dialIntent = Intent(Intent.ACTION_DIAL).apply {
+                    data = Uri.parse("tel:$phoneNumber")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(dialIntent)
+            } catch (ex: Exception) {
+                Toast.makeText(context, "Could not place call", Toast.LENGTH_SHORT).show()
+            }
         } catch (e: Exception) {
             Toast.makeText(context, "Could not place call", Toast.LENGTH_SHORT).show()
         }

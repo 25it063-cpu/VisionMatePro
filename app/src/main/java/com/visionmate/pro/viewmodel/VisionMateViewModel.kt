@@ -60,6 +60,7 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
         application, LocationServicesManager(application), SMSManager(application),
         contactManager, hapticManager, ttsManager
     )
+    val sosManager = SOSManager(emergencyModeManager, bluetoothManager)
 
     private val _caneState = MutableStateFlow(CaneState())
     val caneState: StateFlow<CaneState> = _caneState.asStateFlow()
