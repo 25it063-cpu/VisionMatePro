@@ -86,6 +86,9 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
     private var inferenceJob: Job? = null
     private var sensorJob: Job? = null
 
+    private var isWaterCurrentlyDetected = false
+    private var waterReminderJob: Job? = null
+
     private val lastVisualSectorSeenMs = java.util.concurrent.ConcurrentHashMap<Direction, Long>()
     private val SECTOR_VISUAL_TTL_MS = 600L
     private val FUSION_GRACE_WINDOW_MS = 120L
@@ -203,6 +206,57 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    private fun handleWaterState(isWaterPresent: Boolean) {
+        if (isWaterPresent) {
+            if (!isWaterCurrentlyDetected) {
+                // State Transition: false -> true (First detection)
+                isWaterCurrentlyDetected = true
+                Log.i("WaterDetection", "Water detected → TTS triggered")
+                triggerWaterTts()
+                startWaterReminderJob()
+            } else {
+                // State Transition: true -> true (Continuous detection)
+                Log.d("WaterDetection", "Water still detected → no TTS yet")
+            }
+        } else {
+            if (isWaterCurrentlyDetected) {
+                // State Transition: true -> false (Water cleared)
+                isWaterCurrentlyDetected = false
+                stopWaterReminderJob()
+                Log.i("WaterDetection", "Water cleared → water reminder reset")
+            }
+        }
+    }
+
+    private fun startWaterReminderJob() {
+        waterReminderJob?.cancel()
+        waterReminderJob = viewModelScope.launch(Dispatchers.Default) {
+            while (isActive) {
+                delay(10_000L) // Exactly 10 seconds reminder interval
+                if (isWaterCurrentlyDetected && isActive) {
+                    Log.i("WaterDetection", "Water still detected → 10s reminder TTS triggered")
+                    triggerWaterTts()
+                }
+            }
+        }
+    }
+
+    private fun stopWaterReminderJob() {
+        waterReminderJob?.cancel()
+        waterReminderJob = null
+    }
+
+    private fun triggerWaterTts() {
+        val lang = languageManager.currentLanguage.value
+        val alertPair = responseTemplateManager.formatWaterAlert(lang)
+        viewModelScope.launch(Dispatchers.Main) {
+            // High-priority check: Do not interrupt active emergency SOS alerts
+            if (emergencyModeManager.emergencyState.value.status != com.visionmate.pro.model.EmergencyStatus.IDLE) return@launch
+            ttsManager.speak(alertPair.second, lang, flush = false, urgent = false)
+            updateAlertText(alertPair.first, true)
+        }
+    }
+
     /**
      * Independent Bluetooth Sensor Telemetry Loop.
      * - Evaluates standalone ultrasonic and water hazards in real-time on Dispatchers.Default.
@@ -217,19 +271,18 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
         sensorJob = viewModelScope.launch(Dispatchers.Default) {
             bluetoothManager.sensorDataFlow.collect { rawData ->
                 val connStatus = bluetoothManager.connectionStatus.value
-                if (connStatus != ConnectionStatus.CONNECTED || !rawData.isFresh()) return@collect
+                if (connStatus != ConnectionStatus.CONNECTED || !rawData.isFresh()) {
+                    handleWaterState(false)
+                    return@collect
+                }
 
                 val isCameraLive = cameraStreamReceiver.isFrameLive.value
                 val now = System.currentTimeMillis()
                 val occupiedSectors = getOccupiedVisualSectors()
 
-                // 1. Hardware water hazard evaluated immediately
-                if (rawData.isWaterDetected || rawData.rawWaterValue > 500) {
-                    val lang = languageManager.currentLanguage.value
-                    val alert = decisionEngine.processStandaloneSensors(rawData, occupiedSectors, lang)
-                    if (alert != null) handleAlert(alert, lang)
-                    return@collect
-                }
+                // 1. Hardware water hazard state machine (Immediate first speak, 10s reminder, no 300ms spam)
+                val isWaterPresent = rawData.isWaterDetected || rawData.rawWaterValue > 500
+                handleWaterState(isWaterPresent)
 
                 // 2. Ultrasonic sectors evaluation
                 val sectorReadings = listOf(
@@ -262,7 +315,7 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
                     if (shouldBypassGrace) {
                         pendingSectorJobs.remove(sector)?.cancel()
                         val lang = languageManager.currentLanguage.value
-                        val alert = decisionEngine.processStandaloneSensors(rawData, getOccupiedVisualSectors(), lang)
+                        val alert = decisionEngine.processStandaloneSensors(rawData, occupiedSectors, lang)
                         if (alert != null) handleAlert(alert, lang)
                         continue
                     }
@@ -377,6 +430,7 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
                 )
 
                 if (!isSensorsActive) {
+                    handleWaterState(false)
                     if ((System.currentTimeMillis() % 5000) < 100) _currentAlertText.value = "CANE DISCONNECTED"
                     continue
                 }
@@ -448,6 +502,8 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
         super.onCleared()
         inferenceJob?.cancel()
         sensorJob?.cancel()
+        stopWaterReminderJob()
+        isWaterCurrentlyDetected = false
         pendingSectorJobs.values.forEach { it.cancel() }
         pendingSectorJobs.clear()
         pendingSectorData.clear()

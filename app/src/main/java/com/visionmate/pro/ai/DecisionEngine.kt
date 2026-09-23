@@ -73,21 +73,6 @@ class DecisionEngine(
             }
         }
 
-        // 3. Hardware water sensor hazard (puddle / wet floor detected by cane)
-        if (sensorData.isWaterDetected || sensorData.rawWaterValue > 500) {
-            candidatesToEvaluate.add(
-                Obstacle(
-                    id = "sensor_alert_water",
-                    trackingId = 998,
-                    objectType = ObjectType.WATER,
-                    confidence = 1.0f,
-                    boundingBox = BoundingBox(0f, 0f, 1f, 1f),
-                    direction = Direction.CENTER,
-                    measuredDistanceCm = 0
-                )
-            )
-        }
-
         if (candidatesToEvaluate.isEmpty()) return null
 
         return evaluateCandidatesAndFormatAlert(candidatesToEvaluate, language)
@@ -130,21 +115,6 @@ class DecisionEngine(
                     )
                 }
             }
-        }
-
-        // 2. Hardware water sensor hazard
-        if (sensorData.isWaterDetected || sensorData.rawWaterValue > 500) {
-            candidatesToEvaluate.add(
-                Obstacle(
-                    id = "sensor_alert_water",
-                    trackingId = 998,
-                    objectType = ObjectType.WATER,
-                    confidence = 1.0f,
-                    boundingBox = BoundingBox(0f, 0f, 1f, 1f),
-                    direction = Direction.CENTER,
-                    measuredDistanceCm = 0
-                )
-            )
         }
 
         if (candidatesToEvaluate.isEmpty()) return null

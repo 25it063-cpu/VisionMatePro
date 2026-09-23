@@ -3,8 +3,8 @@ package com.visionmate.pro.safety
 import com.visionmate.pro.model.ProximityState
 
 class ProximityStateManager(
-    var cautionRangeCm: Int = 80,  // Caution up to 1.5 meters
-    var criticalRangeCm: Int = 30   // Danger at 0.3 meters
+    var cautionRangeCm: Int = 25,  // Caution up to 1.5 meters
+    var criticalRangeCm: Int = 10   // Danger at 0.3 meters
 ) {
 
     fun calculateProximityState(distanceCm: Int?, isUpperObstacle: Boolean = false): ProximityState {

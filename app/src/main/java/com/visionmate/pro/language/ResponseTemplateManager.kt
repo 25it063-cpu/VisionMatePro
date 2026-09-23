@@ -111,4 +111,19 @@ class ResponseTemplateManager {
 
         return Pair(display, speech)
     }
+
+    /**
+     * Formats concise Water Detection alert ("Water detected." without distance/direction).
+     */
+    fun formatWaterAlert(language: AppLanguage): Pair<String, String> {
+        val display = "WATER DETECTED"
+        val speech = when (language) {
+            AppLanguage.TAMIL -> "தண்ணீர் கண்டறியப்பட்டது."
+            AppLanguage.HINDI -> "पानी का पता चला है।"
+            AppLanguage.TELUGU -> "నీరు గుర్తించబడింది."
+            AppLanguage.MALAYALAM -> "വെള്ളം കണ്ടെത്തി."
+            else -> "Water detected."
+        }
+        return Pair(display, speech)
+    }
 }
