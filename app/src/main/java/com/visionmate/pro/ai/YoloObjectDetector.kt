@@ -20,7 +20,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.nio.channels.FileChannel
-
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 
@@ -36,6 +35,7 @@ class YoloObjectDetector(
 
     private var interpreter: Interpreter
     private val labels: List<String>
+
     private var gpuDelegate: GpuDelegate? = null
     private var activeDelegateType = "CPU (XNNPACK)"
 
@@ -47,326 +47,311 @@ class YoloObjectDetector(
 
     companion object {
         private const val TAG = "YoloDetector"
+
         private const val MODEL_FILE = "yolov8n_float32.tflite"
         private const val LABELS_FILE = "labels.txt"
 
         private const val INPUT_SIZE = 640
+
+        private const val NUM_CLASSES = 80
+        private const val NUM_DETECTIONS = 8400
+
+        private const val BOX_VALUES = 4
+
         private const val CONFIDENCE_THRESHOLD = 0.40f
+
+        private const val PERSON_CONFIDENCE_THRESHOLD = 0.35f
+        private const val VEHICLE_CONFIDENCE_THRESHOLD = 0.35f
+
+        private const val OBSTACLE_CONFIDENCE_THRESHOLD = 0.45f
+
+        private const val MIN_BOX_AREA = 0.0025f
+
+        private const val MIN_PERSON_BOX_AREA = 0.0010f
+
+        private const val MAX_RETURNED_DETECTIONS = 10
+
+        private const val MAX_LOW_PRIORITY_DETECTIONS = 4
+
         private const val NUM_THREADS = 4
     }
+
+    /**
+     * VisionMate-relevant COCO classes.
+     */
+    private val allowedLabels = setOf(
+        "person",
+        "bicycle", "car", "motorcycle", "bus", "truck", "train", "boat",
+        "traffic light", "stop sign", "fire hydrant", "bench",
+        "dog", "cat", "horse", "cow", "bird", "sheep", "elephant", "bear", "zebra", "giraffe",
+        "chair", "couch", "potted plant", "bed", "dining table",
+        // Prepared for custom model
+        "staircase", "stairs", "branch", "tree branch"
+    )
+
+    private val highPriorityLabels = setOf(
+        "person",
+        "bicycle", "car", "motorcycle", "bus", "truck",
+        "staircase", "stairs"
+    )
+
+    private val mediumPriorityLabels = setOf(
+        "traffic light", "stop sign",
+        "dog", "cat", "horse", "cow",
+        "bench", "chair", "couch", "potted plant", "bed", "dining table",
+        "branch", "tree branch"
+    )
+
+    private val lowPriorityLabels = setOf(
+        "fire hydrant"
+    )
 
     private val inputBuffer = ByteBuffer.allocateDirect(
         INPUT_SIZE * INPUT_SIZE * 3 * 4
     ).apply {
         order(ByteOrder.nativeOrder())
     }
-    private val floatBuffer: FloatBuffer = inputBuffer.asFloatBuffer()
-    private val floatArray = FloatArray(INPUT_SIZE * INPUT_SIZE * 3)
-    private val pixelBuffer = IntArray(INPUT_SIZE * INPUT_SIZE)
-    private val normTable = FloatArray(256) { it / 255.0f }
-    private val outputArray = Array(1) {
-        Array(84) {
-            FloatArray(8400)
+
+    private val floatBuffer: FloatBuffer =
+        inputBuffer.asFloatBuffer()
+
+    private val floatArray =
+        FloatArray(INPUT_SIZE * INPUT_SIZE * 3)
+
+    private val pixelBuffer =
+        IntArray(INPUT_SIZE * INPUT_SIZE)
+
+    private val normTable =
+        FloatArray(256) { it / 255.0f }
+
+    private val outputArray =
+        Array(1) {
+            Array(NUM_CLASSES + BOX_VALUES) {
+                FloatArray(NUM_DETECTIONS)
+            }
         }
-    }
+
     private var frameCounter = 0L
 
     init {
         val modelBuffer = loadModelFile(MODEL_FILE)
-        
-        // Initialize on the dedicated inference thread to guarantee OpenGL/EGL thread context affinity
-        val initResult = inferenceExecutor.submit(Callable {
-            var selectedInterpreter: Interpreter? = null
-            var selectedGpuDelegate: GpuDelegate? = null
-            var delegateName = "CPU (XNNPACK)"
 
-            // 1. Attempt GPU Delegate on dedicated inference thread
-            try {
-                val compatList = CompatibilityList()
-                if (compatList.isDelegateSupportedOnThisDevice) {
-                    val delegateOptions = compatList.bestOptionsForThisDevice.apply {
-                        setInferencePreference(GpuDelegateFactory.Options.INFERENCE_PREFERENCE_SUSTAINED_SPEED)
-                        setPrecisionLossAllowed(false) // Preserve Float32 precision for accurate detections
+        val initResult = inferenceExecutor.submit(
+            Callable {
+                var selectedInterpreter: Interpreter? = null
+                var selectedGpuDelegate: GpuDelegate? = null
+                var delegateName = "CPU (XNNPACK)"
+
+                try {
+                    val compatList = CompatibilityList()
+                    if (compatList.isDelegateSupportedOnThisDevice) {
+                        val delegateOptions =
+                            compatList.bestOptionsForThisDevice.apply {
+                                setInferencePreference(
+                                    GpuDelegateFactory.Options.INFERENCE_PREFERENCE_SUSTAINED_SPEED
+                                )
+                                setPrecisionLossAllowed(false)
+                            }
+                        val delegate = GpuDelegate(delegateOptions)
+                        val options = Interpreter.Options().apply {
+                            addDelegate(delegate)
+                        }
+                        selectedInterpreter = Interpreter(modelBuffer, options)
+                        selectedGpuDelegate = delegate
+                        delegateName = "GPU Delegate"
+                        Log.i(TAG, "GPU Delegate initialized successfully.")
                     }
-                    val delegate = GpuDelegate(delegateOptions)
-                    val options = Interpreter.Options().apply {
-                        addDelegate(delegate)
+                } catch (e: Throwable) {
+                    Log.w(TAG, "GPU initialization failed, using CPU.")
+                    try { selectedGpuDelegate?.close() } catch (_: Exception) {}
+                    selectedGpuDelegate = null
+                    try { selectedInterpreter?.close() } catch (_: Exception) {}
+                    selectedInterpreter = null
+                }
+
+                if (selectedInterpreter == null) {
+                    val cpuOptions = Interpreter.Options().apply {
+                        setNumThreads(NUM_THREADS)
+                        setUseXNNPACK(true)
                     }
-                    val testInterpreter = Interpreter(modelBuffer, options)
-                    
-                    // Warm-up inference on the dedicated thread to verify GPU execution
-                    testInterpreter.run(inputBuffer, outputArray)
-                    
-                    selectedInterpreter = testInterpreter
-                    selectedGpuDelegate = delegate
-                    delegateName = "GPU Delegate"
-                    Log.i(TAG, "TFLite GPU Delegate initialized and verified successfully on dedicated inference thread.")
-                } else {
-                    Log.i(TAG, "CompatibilityList reports GPU Delegate not supported on this device.")
+                    selectedInterpreter = Interpreter(modelBuffer, cpuOptions)
+                    delegateName = "CPU (XNNPACK, $NUM_THREADS threads)"
                 }
-            } catch (e: Throwable) {
-                Log.w(TAG, "GPU Delegate initialization failed on dedicated thread: ${e.message}. Falling back to XNNPACK CPU.", e)
-                try { selectedGpuDelegate?.close() } catch (_: Exception) {}
-                selectedGpuDelegate = null
-                try { selectedInterpreter?.close() } catch (_: Exception) {}
-                selectedInterpreter = null
+                Triple(selectedInterpreter, selectedGpuDelegate, delegateName)
             }
-
-            // 2. Clean fallback to CPU with XNNPACK on 4 threads if GPU cannot be used
-            if (selectedInterpreter == null) {
-                val cpuOptions = Interpreter.Options().apply {
-                    setNumThreads(NUM_THREADS)
-                    setUseXNNPACK(true)
-                }
-                selectedInterpreter = Interpreter(modelBuffer, cpuOptions)
-                delegateName = "CPU (XNNPACK, $NUM_THREADS threads)"
-                Log.i(TAG, "Initialized TFLite on CPU with XNNPACK on dedicated inference thread.")
-            }
-
-            Triple(selectedInterpreter, selectedGpuDelegate, delegateName)
-        }).get()
+        ).get()
 
         interpreter = initResult.first
         gpuDelegate = initResult.second
         activeDelegateType = initResult.third
         labels = loadLabels()
-        Log.i(TAG, "TFLite initialization complete: Active Delegate = $activeDelegateType")
     }
 
-    override fun processFrame(frame: CameraFrame): List<Obstacle> = synchronized(this) {
+    override fun processFrame(
+        frame: CameraFrame
+    ): List<Obstacle> = synchronized(this) {
         val bitmap = frame.bitmap ?: return emptyList()
         if (bitmap.isRecycled) return emptyList()
 
         try {
-            val receiveTime = System.currentTimeMillis()
-            val frameAgeMs = receiveTime - frame.timestamp
             val t0 = System.nanoTime()
-
-            // 1. Manual Bitmap resize
             val resizedBitmap = if (bitmap.width == INPUT_SIZE && bitmap.height == INPUT_SIZE) {
                 bitmap
             } else {
-                Bitmap.createScaledBitmap(
-                    bitmap,
-                    INPUT_SIZE,
-                    INPUT_SIZE,
-                    true
-                )
+                Bitmap.createScaledBitmap(bitmap, INPUT_SIZE, INPUT_SIZE, true)
             }
-            val t1 = System.nanoTime()
-
-            // 2. Manual RGB float extraction (optimized bulk transfer)
             val input = bitmapToByteBuffer(resizedBitmap)
+            if (resizedBitmap != bitmap) resizedBitmap.recycle()
 
-            if (resizedBitmap != bitmap && !resizedBitmap.isRecycled) {
-                resizedBitmap.recycle()
-            }
-            val t2 = System.nanoTime()
+            inferenceExecutor.submit(Callable { interpreter.run(input, outputArray) }).get()
 
-            // 3. TFLite inference on the EXACT same dedicated thread
-            val t3 = System.nanoTime()
-            inferenceExecutor.submit(Callable {
-                try {
-                    interpreter.run(input, outputArray)
-                } catch (e: Throwable) {
-                    if (gpuDelegate != null) {
-                        Log.w(TAG, "GPU inference failed at runtime: ${e.message}. Reverting to CPU XNNPACK.", e)
-                        try { gpuDelegate?.close() } catch (_: Exception) {}
-                        gpuDelegate = null
-                        val cpuOptions = Interpreter.Options().apply {
-                            setNumThreads(NUM_THREADS)
-                            setUseXNNPACK(true)
-                        }
-                        interpreter = Interpreter(loadModelFile(MODEL_FILE), cpuOptions)
-                        activeDelegateType = "CPU (XNNPACK Runtime Fallback)"
-                        interpreter.run(input, outputArray)
-                    } else {
-                        throw e
-                    }
-                }
-            }).get()
-            val tEnd = System.nanoTime()
-
-            // 4. Output parsing
-            val obstacles = parseOutput(
-                outputArray[0],
-                bitmap.width,
-                bitmap.height
-            )
-
+            val obstacles = parseOutput(outputArray[0], bitmap.width, bitmap.height)
             _detectedObstacles.value = obstacles
-            val t4 = System.nanoTime()
-
-            val resizeMs = (t1 - t0) / 1_000_000.0
-            val preprocessMs = (t2 - t1) / 1_000_000.0
-            val inferenceMs = (tEnd - t3) / 1_000_000.0
-            val parseMs = (t4 - tEnd) / 1_000_000.0
-            val totalMs = (t4 - t0) / 1_000_000.0
-
+            
             frameCounter++
-            Log.i(TAG, "DetectionTiming: FrameID=${frame.frameId} Age=${frameAgeMs}ms Resize=%.1fms Preprocess=%.1fms Inference=%.1fms Parse=%.1fms Total=%.1fms (Delegate=$activeDelegateType)".format(
-                resizeMs, preprocessMs, inferenceMs, parseMs, totalMs
-            ))
+            Log.d(TAG, "Inference completed for frame ${frame.frameId}. Detected: ${obstacles.size}")
 
             return obstacles
         } catch (e: Exception) {
-            Log.e(TAG, "Recoverable frame inference error: ${e.message}", e)
+            Log.e(TAG, "Recoverable frame inference error: ${e.message}")
             return emptyList()
         }
     }
 
     private fun bitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
-        bitmap.getPixels(
-            pixelBuffer,
-            0,
-            INPUT_SIZE,
-            0,
-            0,
-            INPUT_SIZE,
-            INPUT_SIZE
-        )
-
+        bitmap.getPixels(pixelBuffer, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
         var dstIdx = 0
-        for (i in 0 until pixelBuffer.size) {
+        for (i in pixelBuffer.indices) {
             val pixel = pixelBuffer[i]
             floatArray[dstIdx++] = normTable[(pixel shr 16) and 0xFF]
             floatArray[dstIdx++] = normTable[(pixel shr 8) and 0xFF]
             floatArray[dstIdx++] = normTable[pixel and 0xFF]
         }
-
         floatBuffer.rewind()
         floatBuffer.put(floatArray)
         inputBuffer.rewind()
         return inputBuffer
     }
 
-    private fun parseOutput(
-        output: Array<FloatArray>,
-        imageWidth: Int,
-        imageHeight: Int
-    ): List<Obstacle> {
-        val obstacles = mutableListOf<Obstacle>()
-        var globalMaxConfidence = 0f
-        var globalBestClass = -1
+    private fun parseOutput(output: Array<FloatArray>, imageWidth: Int, imageHeight: Int): List<Obstacle> {
+        val candidates = mutableListOf<Obstacle>()
+        for (i in 0 until NUM_DETECTIONS) {
+            var bestClass = -1
+            var bestConfidence = 0f
 
-        for (i in 0 until 8400) {
+            for (classIndex in BOX_VALUES until NUM_CLASSES + BOX_VALUES) {
+                val confidence = output[classIndex][i]
+                if (confidence > bestConfidence) {
+                    bestConfidence = confidence
+                    bestClass = classIndex - BOX_VALUES
+                }
+            }
+
+            if (bestConfidence < CONFIDENCE_THRESHOLD || bestClass !in labels.indices) continue
+
+            val label = labels[bestClass].trim().lowercase()
+            if (label !in allowedLabels) continue
+
+            val requiredConfidence = confidenceThresholdFor(label)
+            if (bestConfidence < requiredConfidence) continue
+
             val centerX = output[0][i]
             val centerY = output[1][i]
             val width = output[2][i]
             val height = output[3][i]
 
-            var bestClass = -1
-            var bestConfidence = 0f
+            val left = (centerX - width / 2f).coerceIn(0f, 1f)
+            val top = (centerY - height / 2f).coerceIn(0f, 1f)
+            val right = (centerX + width / 2f).coerceIn(0f, 1f)
+            val bottom = (centerY + height / 2f).coerceIn(0f, 1f)
 
-            for (classIndex in 4 until 84) {
-                val confidence = output[classIndex][i]
-                if (confidence > bestConfidence) {
-                    bestConfidence = confidence
-                    bestClass = classIndex - 4
-                }
-            }
+            if ((right - left) * (bottom - top) < if (label == "person") MIN_PERSON_BOX_AREA else MIN_BOX_AREA) continue
 
-            if (bestConfidence > globalMaxConfidence) {
-                globalMaxConfidence = bestConfidence
-                globalBestClass = bestClass
-            }
-
-            if (bestConfidence < CONFIDENCE_THRESHOLD) {
-                continue
-            }
-
-            if (bestClass !in labels.indices) {
-                continue
-            }
-
-            val label = labels[bestClass]
-
-            val left = ((centerX - width / 2f) / INPUT_SIZE).coerceIn(0f, 1f)
-            val top = ((centerY - height / 2f) / INPUT_SIZE).coerceIn(0f, 1f)
-            val right = ((centerX + width / 2f) / INPUT_SIZE).coerceIn(0f, 1f)
-            val bottom = ((centerY + height / 2f) / INPUT_SIZE).coerceIn(0f, 1f)
-
-            val direction = when {
-                centerX < INPUT_SIZE * 0.33f -> Direction.LEFT
-                centerX > INPUT_SIZE * 0.66f -> Direction.RIGHT
-                else -> Direction.CENTER
-            }
-
-            val objectType = mapObjectType(label)
-
-            obstacles.add(
-                Obstacle(
-                    id = "yolo_${label}_$i",
-                    trackingId = i,
-                    objectType = objectType,
-                    confidence = bestConfidence,
-                    boundingBox = BoundingBox(
-                        left,
-                        top,
-                        right,
-                        bottom
-                    ),
-                    direction = direction
-                )
-            )
+            candidates.add(Obstacle(
+                id = "yolo_${label}_$i",
+                trackingId = i,
+                objectType = mapObjectType(label),
+                confidence = bestConfidence,
+                boundingBox = BoundingBox(left, top, right, bottom),
+                direction = if (centerX < INPUT_SIZE * 0.33f) Direction.LEFT else if (centerX > INPUT_SIZE * 0.66f) Direction.RIGHT else Direction.CENTER
+            ))
         }
 
-        val sorted = obstacles.sortedByDescending { it.confidence }
+        val prioritized = candidates.sortedWith(
+            compareByDescending<Obstacle> { priorityScore(it) }
+                .thenByDescending { it.confidence }
+                .thenByDescending { boundingBoxArea(it) }
+        )
 
-        if (sorted.isNotEmpty()) {
-            val top5 = sorted.take(5).joinToString("; ") { obs ->
-                "[label=${obs.id}, type=${obs.objectType}, conf=%.2f, dir=${obs.direction}, box=(%.2f,%.2f,%.2f,%.2f)]".format(
-                    obs.confidence, obs.boundingBox.left, obs.boundingBox.top, obs.boundingBox.right, obs.boundingBox.bottom
-                )
-            }
-            Log.i(TAG, "YOLO Output (${sorted.size} candidates >= $CONFIDENCE_THRESHOLD): $top5")
-        } else {
-            val maxLabel = if (globalBestClass in labels.indices) labels[globalBestClass] else "none"
-            Log.i(TAG, "YOLO Output: 0 candidates >= $CONFIDENCE_THRESHOLD (highest: '$maxLabel' conf=%.2f)".format(globalMaxConfidence))
+        val selected = mutableListOf<Obstacle>()
+        var lowPriorityCount = 0
+        for (obstacle in prioritized) {
+            val label = labelFromObstacle(obstacle)
+            if (label in lowPriorityLabels && lowPriorityCount >= MAX_LOW_PRIORITY_DETECTIONS) continue
+            selected.add(obstacle)
+            if (label in lowPriorityLabels) lowPriorityCount++
+            if (selected.size >= MAX_RETURNED_DETECTIONS) break
         }
 
-        return sorted.take(10)
+        return selected
+    }
+
+    private fun confidenceThresholdFor(label: String): Float = when {
+        label == "person" -> PERSON_CONFIDENCE_THRESHOLD
+        label in highPriorityLabels -> VEHICLE_CONFIDENCE_THRESHOLD
+        else -> OBSTACLE_CONFIDENCE_THRESHOLD
+    }
+
+    private fun priorityScore(obstacle: Obstacle): Float {
+        val label = labelFromObstacle(obstacle)
+        val basePriority = when {
+            label == "person" -> 100f
+            label in highPriorityLabels -> 90f
+            label in mediumPriorityLabels -> 60f
+            label in lowPriorityLabels -> 30f
+            else -> 0f
+        }
+        val sizeBonus = (boundingBoxArea(obstacle) * 50f).coerceIn(0f, 25f)
+        return basePriority + sizeBonus + (obstacle.confidence * 15f)
+    }
+
+    private fun boundingBoxArea(obstacle: Obstacle): Float {
+        val box = obstacle.boundingBox
+        return (box.right - box.left).coerceAtLeast(0f) * (box.bottom - box.top).coerceAtLeast(0f)
+    }
+
+    private fun labelFromObstacle(obstacle: Obstacle): String {
+        val id = obstacle.id
+        if (id.startsWith("yolo_")) {
+            val withoutPrefix = id.removePrefix("yolo_")
+            val lastUnderscore = withoutPrefix.lastIndexOf('_')
+            if (lastUnderscore > 0) return withoutPrefix.substring(0, lastUnderscore)
+            return withoutPrefix
+        }
+        return "other"
     }
 
     private fun mapObjectType(label: String): ObjectType {
         return when (label.lowercase()) {
             "person" -> ObjectType.PERSON
-
-            // Vehicles
-            "car", "bus", "truck", "motorcycle", "bicycle", "train", "airplane", "boat" -> ObjectType.VEHICLE
-
-            // Furniture
+            "car", "bus", "truck", "motorcycle", "bicycle", "train", "boat" -> ObjectType.VEHICLE
+            "dog" -> ObjectType.DOG
+            "cat" -> ObjectType.CAT
+            "cow" -> ObjectType.COW
+            "staircase", "stairs" -> ObjectType.STAIRCASE
+            "tree branch", "branch" -> ObjectType.TREE_BRANCH
             "chair", "couch", "bed", "dining table", "bench" -> ObjectType.CHAIR
-
-            // Animals
-            "cat", "dog", "bird", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe" -> ObjectType.ANIMAL
-
-            // Street Objects (Mapped to Pole)
-            "traffic light", "stop sign", "fire hydrant", "parking meter" -> ObjectType.POLE
-
-            // Household items / Potential obstacles
-            "backpack", "umbrella", "handbag", "suitcase", "bottle", "cup", "tv", "laptop", "refrigerator" -> ObjectType.OTHER
-
+            "traffic light", "stop sign", "fire hydrant" -> ObjectType.STREET_OBJECT
+            "horse", "sheep", "elephant", "bear", "zebra", "giraffe", "bird" -> ObjectType.ANIMAL
             else -> ObjectType.OTHER
         }
     }
 
     private fun loadModelFile(fileName: String): ByteBuffer {
-        val fileDescriptor = context.assets.openFd(fileName)
-        val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
-        val fileChannel = inputStream.channel
-        return fileChannel.map(
-            FileChannel.MapMode.READ_ONLY,
-            fileDescriptor.startOffset,
-            fileDescriptor.declaredLength
-        )
+        val fd = context.assets.openFd(fileName)
+        return FileInputStream(fd.fileDescriptor).channel.map(FileChannel.MapMode.READ_ONLY, fd.startOffset, fd.declaredLength)
     }
 
-    private fun loadLabels(): List<String> {
-        return context.assets
-            .open(LABELS_FILE)
-            .bufferedReader()
-            .readLines()
-            .filter { it.isNotBlank() }
-    }
+    private fun loadLabels(): List<String> = context.assets.open(LABELS_FILE).bufferedReader().readLines().filter { it.isNotBlank() }.map { it.trim() }
+    private fun validateLabels() {}
 }

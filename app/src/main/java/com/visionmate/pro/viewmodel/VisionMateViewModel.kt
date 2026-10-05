@@ -46,6 +46,14 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
         responseTemplateManager
     )
 
+    // Person approach tracking + alert state machine (visual only, no ultrasonic)
+    private val personApproachTracker   = PersonApproachTracker()
+    private val personAlertStateMachine = PersonAlertStateMachine()
+    private val personIdentityGuard     = PersonIdentityGuard()
+
+    /** Single tracker slot key used for the one selected person candidate. */
+    private val PERSON_SLOT = 0
+
     val speechRecognizerManager = SpeechRecognizerManager(application)
     val languageManager = LanguageManager()
     val voiceCommandProcessor = VoiceCommandProcessor(languageManager)
@@ -123,7 +131,7 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
         languageManager.setLanguageByCode(savedPrefs.languageCode)
         
         observeTelemetryAndRunPipeline()
-        startInferenceLoop() 
+        startInferenceLoop()
         startSensorTelemetryLoop()
         refreshPairedDevices()
         
@@ -131,7 +139,7 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             _currentAlertText.value = "CONNECTING CAMERA..."
             cameraStreamReceiver.startStreaming(RealCameraStreamReceiver.STREAM_URL)
-            
+
             // Wait for first frame to arrive (Confirmed Live)
             cameraStreamReceiver.isFrameLive.first { it }
             ttsManager.speak("Camera Ready.", languageManager.currentLanguage.value)
@@ -159,7 +167,9 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
                 if (frame == null) return@collect
                 try {
                     // 1. Run YOLO inference on background thread
-                    val detections = objectDetector.processFrame(frame)
+                    val rawDetections = objectDetector.processFrame(frame)
+                    val detections = objectTracker.updateTracks(rawDetections)
+                    
                     val now = System.currentTimeMillis()
                     for (det in detections) {
                         if (!det.isUpperObstacle && det.objectType != ObjectType.TREE_BRANCH) {
@@ -184,15 +194,52 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
 
                     val sensorData = if (isBtConnected && rawSensorData.isFresh()) rawSensorData else SensorData.invalid()
                     val lang = languageManager.currentLanguage.value
-                    val alert = decisionEngine.processFrameAndSensors(detections, sensorData, systemHealth.value, lang)
+
+                    // 2a. Person approach: select ONE best candidate, track it, fire TTS if needed
+                    val persons   = detections.filter { it.objectType == ObjectType.PERSON }
+                    val candidate = PersonCandidateSelector.select(persons)
+
+                    if (candidate != null) {
+                        val normalizedX = (candidate.obstacle.boundingBox.left +
+                                          candidate.obstacle.boundingBox.right) / 2f
+
+                        // Identity guard: if box area jumped sharply, a different person
+                        // is likely selected → reset smoothing + state-machine history
+                        val identityChanged = personIdentityGuard.checkAndUpdate(
+                            candidate.obstacle.trackingId,
+                            candidate.normalizedBoxArea
+                        )
+                        if (identityChanged) {
+                            Log.i("PersonAlert", "Identity change detected — resetting approach history")
+                            personApproachTracker.remove(PERSON_SLOT)
+                            personAlertStateMachine.remove(PERSON_SLOT)
+                        }
+
+                        val approachResult = personApproachTracker.update(
+                            PERSON_SLOT, candidate.normalizedBoxArea, normalizedX
+                        )
+                        val alertEvent = personAlertStateMachine.update(approachResult)
+                        if (alertEvent != null) handlePersonAlertEvent(alertEvent, lang)
+                    } else {
+                        // No valid candidate this frame → clear all person state
+                        personApproachTracker.remove(PERSON_SLOT)
+                        personAlertStateMachine.remove(PERSON_SLOT)
+                        personIdentityGuard.reset()
+                    }
+
+                    // Camera-detected persons are handled exclusively by step 2a (visual-only pipeline).
+                    // Pass only non-person obstacles to DecisionEngine so ultrasonic distance is
+                    // never fused with a camera person detection.
+                    val nonPersonDetections = detections.filter { it.objectType != ObjectType.PERSON }
+                    val alert = decisionEngine.processFrameAndSensors(nonPersonDetections, sensorData, systemHealth.value, lang)
 
                     // 3. Announcements & UI dispatch on Main thread
                     if (alert != null) {
                         handleAlert(alert, lang)
                     } else {
                         withContext(Dispatchers.Main) {
-                            if (_assistantState.value != AssistantState.LISTENING && 
-                                _assistantState.value != AssistantState.SPEAKING && 
+                            if (_assistantState.value != AssistantState.LISTENING &&
+                                _assistantState.value != AssistantState.SPEAKING &&
                                 _assistantState.value != AssistantState.EMERGENCY) {
                                 _assistantState.value = AssistantState.SAFE
                             }
@@ -203,6 +250,105 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
                     Log.e("VisionMateVM", "Recoverable error during YOLO inference: ${e.message}", e)
                 }
             }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Person alert TTS
+    // -------------------------------------------------------------------------
+
+    private suspend fun handlePersonAlertEvent(
+        event: PersonAlertStateMachine.PersonAlertEvent,
+        lang: AppLanguage
+    ) {
+        val speechText = formatPersonAlertSpeech(event.newState, event.trajectoryDirection, lang)
+        if (speechText.isEmpty()) return
+
+        val displayText = when (event.newState) {
+            PersonAlertStateMachine.PersonAlertState.APPROACHING -> "PERSON APPROACHING"
+            PersonAlertStateMachine.PersonAlertState.NEAR        -> "PERSON NEARBY"
+            else -> return
+        }
+        val isUrgent = event.newState == PersonAlertStateMachine.PersonAlertState.NEAR
+
+        withContext(Dispatchers.Main) {
+            // Do not interrupt active SOS alerts
+            if (emergencyModeManager.emergencyState.value.status != com.visionmate.pro.model.EmergencyStatus.IDLE) return@withContext
+            ttsManager.speak(speechText, lang, flush = isUrgent, urgent = isUrgent)
+            updateAlertText(displayText, true)
+            Log.i("PersonAlert", "TTS fired: state=${event.newState} dir=${event.trajectoryDirection.label} lang=$lang")
+        }
+    }
+
+    private fun formatPersonAlertSpeech(
+        state: PersonAlertStateMachine.PersonAlertState,
+        direction: TrajectoryDirection,
+        language: AppLanguage
+    ): String = when (language) {
+        AppLanguage.ENGLISH -> when (state) {
+            PersonAlertStateMachine.PersonAlertState.APPROACHING -> when (direction) {
+                TrajectoryDirection.LEFT   -> "Person approaching, on your left."
+                TrajectoryDirection.CENTER -> "Person approaching ahead."
+                TrajectoryDirection.RIGHT  -> "Person approaching, on your right."
+            }
+            PersonAlertStateMachine.PersonAlertState.NEAR -> when (direction) {
+                TrajectoryDirection.LEFT   -> "Person on your left."
+                TrajectoryDirection.CENTER -> "Person ahead."
+                TrajectoryDirection.RIGHT  -> "Person on your right."
+            }
+            else -> ""
+        }
+        AppLanguage.TAMIL -> when (state) {
+            PersonAlertStateMachine.PersonAlertState.APPROACHING -> when (direction) {
+                TrajectoryDirection.LEFT   -> "ஒருவர் உங்கள் இடதுபுறத்தில் நெருங்கி வருகிறார்."
+                TrajectoryDirection.CENTER -> "ஒருவர் நேரே நெருங்கி வருகிறார்."
+                TrajectoryDirection.RIGHT  -> "ஒருவர் உங்கள் வலதுபுறத்தில் நெருங்கி வருகிறார்."
+            }
+            PersonAlertStateMachine.PersonAlertState.NEAR -> when (direction) {
+                TrajectoryDirection.LEFT   -> "ஒருவர் உங்கள் இடதுபுறத்தில் அருகில் உள்ளார்."
+                TrajectoryDirection.CENTER -> "ஒருவர் முன்னே அருகில் உள்ளார்."
+                TrajectoryDirection.RIGHT  -> "ஒருவர் உங்கள் வலதுபுறத்தில் அருகில் உள்ளார்."
+            }
+            else -> ""
+        }
+        AppLanguage.HINDI -> when (state) {
+            PersonAlertStateMachine.PersonAlertState.APPROACHING -> when (direction) {
+                TrajectoryDirection.LEFT   -> "कोई व्यक्ति बाईं ओर से आ रहा है।"
+                TrajectoryDirection.CENTER -> "कोई व्यक्ति सामने से आ रहा है।"
+                TrajectoryDirection.RIGHT  -> "कोई व्यक्ति दाईं ओर से आ रहा है।"
+            }
+            PersonAlertStateMachine.PersonAlertState.NEAR -> when (direction) {
+                TrajectoryDirection.LEFT   -> "कोई व्यक्ति बाईं ओर पास में है।"
+                TrajectoryDirection.CENTER -> "कोई व्यक्ति सामने पास में है।"
+                TrajectoryDirection.RIGHT  -> "कोई व्यक्ति दाईं ओर पास में है।"
+            }
+            else -> ""
+        }
+        AppLanguage.TELUGU -> when (state) {
+            PersonAlertStateMachine.PersonAlertState.APPROACHING -> when (direction) {
+                TrajectoryDirection.LEFT   -> "ఒక వ్యక్తి మీ ఎడమవైపు నుండి వస్తున్నారు."
+                TrajectoryDirection.CENTER -> "ఒక వ్యక్తి ముందు నుండి వస్తున్నారు."
+                TrajectoryDirection.RIGHT  -> "ఒక వ్యక్తి మీ కుడివైపు నుండి వస్తున్నారు."
+            }
+            PersonAlertStateMachine.PersonAlertState.NEAR -> when (direction) {
+                TrajectoryDirection.LEFT   -> "ఒక వ్యక్తి మీ ఎడమవైపు సమీపంలో ఉన్నారు."
+                TrajectoryDirection.CENTER -> "ఒక వ్యక్తి ముందు సమీపంలో ఉన్నారు."
+                TrajectoryDirection.RIGHT  -> "ఒక వ్యక్తి మీ కుడివైపు సమీపంలో ఉన్నారు."
+            }
+            else -> ""
+        }
+        AppLanguage.MALAYALAM -> when (state) {
+            PersonAlertStateMachine.PersonAlertState.APPROACHING -> when (direction) {
+                TrajectoryDirection.LEFT   -> "ഒരാൾ നിങ്ങളുടെ ഇടതുഭാഗത്ത് നിന്ന് അടുക്കുന്നു."
+                TrajectoryDirection.CENTER -> "ഒരാൾ മുന്നിൽ നിന്ന് അടുക്കുന്നു."
+                TrajectoryDirection.RIGHT  -> "ഒരാൾ നിങ്ങളുടെ വലതുഭാഗത്ത് നിന്ന് അടുക്കുന്നു."
+            }
+            PersonAlertStateMachine.PersonAlertState.NEAR -> when (direction) {
+                TrajectoryDirection.LEFT   -> "ഒരാൾ നിങ്ങളുടെ ഇടതുഭാഗത്ത് അടുത്തുണ്ട്."
+                TrajectoryDirection.CENTER -> "ഒരാൾ മുന്നിൽ അടുത്തുണ്ട്."
+                TrajectoryDirection.RIGHT  -> "ഒരാൾ നിങ്ങളുടെ വലതുഭാഗത്ത് അടുത്തുണ്ട്."
+            }
+            else -> ""
         }
     }
 
@@ -355,9 +501,9 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
         withContext(Dispatchers.Main) {
             val shouldFlush = alert.proximityState == ProximityState.TOO_NEAR || alert.isDistanceUpgrade
             ttsManager.speak(
-                alert.speechText, 
-                lang, 
-                flush = shouldFlush, 
+                alert.speechText,
+                lang,
+                flush = shouldFlush,
                 urgent = alert.proximityState == ProximityState.TOO_NEAR
             )
             updateAlertText(alert.displayText, true)
@@ -434,7 +580,7 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
                     if ((System.currentTimeMillis() % 5000) < 100) _currentAlertText.value = "CANE DISCONNECTED"
                     continue
                 }
-                
+
                 // Clear UI if path is safe and no AI alerts are active
                 if (rawData.frontDistanceCm >= 0 && proximityStateManager.calculateProximityState(rawData.frontDistanceCm) == ProximityState.SAFE) {
                     if ((System.currentTimeMillis() - uiAlertLockMs) > 2500L) {
@@ -507,6 +653,9 @@ class VisionMateViewModel(application: Application) : AndroidViewModel(applicati
         pendingSectorJobs.values.forEach { it.cancel() }
         pendingSectorJobs.clear()
         pendingSectorData.clear()
+        personApproachTracker.clear()
+        personAlertStateMachine.clear()
+        personIdentityGuard.reset()
         speechRecognizerManager.destroy()
         ttsManager.shutdown()
         bluetoothManager.disconnect()

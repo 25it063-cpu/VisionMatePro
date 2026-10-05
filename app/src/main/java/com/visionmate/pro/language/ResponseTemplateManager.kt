@@ -9,7 +9,7 @@ class ResponseTemplateManager {
 
     /**
      * Formats the coordinated YOLO + Sensor alert.
-     * Fulfills Requirement 7: "[Object] detected at [Distance] centimeters"
+     * Fulfills Requirement 7: "[Object] detected [Direction] at [Distance] centimeters"
      */
     fun formatObstacleAlert(
         obstacle: Obstacle,
@@ -32,8 +32,8 @@ class ResponseTemplateManager {
         } else ""
 
         val dirSuffixEnglish = when (obstacle.direction) {
-            Direction.LEFT -> "on the left"
-            Direction.RIGHT -> "on the right"
+            Direction.LEFT -> "left"
+            Direction.RIGHT -> "right"
             Direction.CENTER -> "ahead"
         }
 
@@ -47,7 +47,9 @@ class ResponseTemplateManager {
             when (language) {
                 AppLanguage.ENGLISH -> {
                     append(localizedName.replaceFirstChar { it.uppercase() })
-                    append(" detected")
+                    //append(" detected")
+                   // append(" $dirSuffixEnglish")
+
                     if (dist != null) {
                         append(" at $distText $dirSuffixEnglish.")
                     } else {
@@ -60,9 +62,9 @@ class ResponseTemplateManager {
                         Direction.RIGHT -> "வலதுபுறத்தில்"
                         Direction.CENTER -> "முன்னே"
                     }
-                    append("$localizedName கண்டறியப்பட்டது. ")
+                    append("$localizedName $dirTamil கண்டறியப்பட்டது. ")
                     if (dist != null) {
-                        append("$dirTamil $distText.")
+                        append("$distText.")
                     } else {
                         append("$dirTamil.")
                     }
@@ -73,7 +75,7 @@ class ResponseTemplateManager {
                         Direction.RIGHT -> "दाईं ओर"
                         Direction.CENTER -> "सामने"
                     }
-                    append("$localizedName का पता चला है। ")
+                    //append("$localizedName का पता चला है। ")
                     if (dist != null) {
                         append("$dirHindi $distText पर है।")
                     } else {

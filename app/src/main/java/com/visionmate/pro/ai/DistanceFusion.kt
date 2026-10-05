@@ -52,22 +52,11 @@ object DistanceFusion {
             )
         }
 
-        // Determine eligible sector using the existing DirectionDetector
-        val eligibleSector = DirectionDetector.determineDirection(obstacle.boundingBox)
-        val sectorDist = getSectorDistance(eligibleSector, sensorData)
-
-        return if (sectorDist != null) {
-            obstacle.copy(
-                direction = eligibleSector,
-                measuredDistanceCm = sectorDist
-            )
-        } else {
-            // Matched sensor is invalid (-1): do not borrow another sensor's distance
-            obstacle.copy(
-                direction = Direction.CENTER,
-                measuredDistanceCm = null
-            )
-        }
+        // User requested NO distance logic for camera detections
+        return obstacle.copy(
+            direction = DirectionDetector.determineDirection(obstacle.boundingBox),
+            measuredDistanceCm = null
+        )
     }
 }
 

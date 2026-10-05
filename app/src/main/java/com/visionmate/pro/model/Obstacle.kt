@@ -11,6 +11,9 @@ enum class ObjectType {
     WALL,
     WATER,
     ANIMAL,
+    DOG,
+    CAT,
+    COW,
     STREET_OBJECT,
     HOUSEHOLD_ITEM,
     OTHER
@@ -30,6 +33,10 @@ data class BoundingBox(
 ) {
     val isUpperObstacle: Boolean
         get() = top < 0.35f && bottom < 0.60f
+
+    companion object {
+        fun empty() = BoundingBox(0f, 0f, 0f, 0f)
+    }
 }
 
 data class Obstacle(
@@ -42,4 +49,15 @@ data class Obstacle(
     val measuredDistanceCm: Int? = null,
     val isUpperObstacle: Boolean = (objectType == ObjectType.TREE_BRANCH || boundingBox.isUpperObstacle),
     val timestamp: Long = System.currentTimeMillis()
-)
+) {
+    companion object {
+        fun unknown(direction: Direction) = Obstacle(
+            id = "unknown_${direction.name}",
+            trackingId = -1,
+            objectType = ObjectType.OTHER,
+            confidence = 1.0f,
+            boundingBox = BoundingBox.empty(),
+            direction = direction
+        )
+    }
+}

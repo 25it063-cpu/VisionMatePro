@@ -37,8 +37,7 @@ class DecisionEngine(
 
         // 1. Visual detections fused with their corresponding sector ultrasonic distance & direction
         if (rawDetections.isNotEmpty()) {
-            val trackedDetections = objectTracker.updateTracks(rawDetections)
-            for (obs in trackedDetections) {
+            for (obs in rawDetections) {
                 if (!obs.isUpperObstacle && obs.objectType != ObjectType.TREE_BRANCH) {
                     val sector = DirectionDetector.determineDirection(obs.boundingBox)
                     matchedSectors.add(sector)
